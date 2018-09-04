@@ -1,0 +1,59 @@
+# Table 1.
+
+# English monolingual model on Task 2.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2_{seed}/ --max_violation --patience 10 --seed {} --num_epochs 1000
+
+# German monolingual model on Task 2.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/de2_{seed}/ --max_violation --patience 10 --seed {} --num_epochs 1000
+
+# English-German bilingual model on Task 2.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_{seed}/ --max_violation --patience 10 --seed {} 
+
+
+#line 2. English-German bilingual model on Task 2. with randomliy initialized language embeddings.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_langid_{seed}/ --max_violation --patience 10 --seed {} --langid
+
+
+#line 2. English-German bilingual model on Task 2. with pre-trained language embeddings.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_bible_{seed}/ --max_violation --patience 10 --seed {} --langid --pretrained_langid
+
+#line 2. English-German bilingual model on Task 2. with URIEL features.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_uriel_{seed}/ --max_violation --patience 10 --seed {} --langid --uriel
+
+
+#line 2. English-German bilingual model on Task 2. with c2c loss.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_c2c_{seed}/ --max_violation --patience 10 --seed {} --sentencepair
+
+
+#line 2. English-German bilingual model on Task 2. with randomliy initialized language embeddings.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_c2c_langid_{seed}/ --max_violation --patience 10 --seed {} --sentencepair --langid
+
+
+#line 2. English-German bilingual model on Task 2. with pre-trained language embeddings.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_c2c_bible_{seed}/ --max_violation --patience 10 --seed {} --sentencepair --langid --pretrained_langid
+
+#line 2. English-German bilingual model on Task 2. with URIEL features.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de2_c2c_uriel_{seed}/ --max_violation --patience 10 --seed {} --sentencepair --langid --uriel
+
+# Table 2.
+
+
+#line 1 English monolingual model on Task 1.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en1_{seed}/ --max_violation --patience 10 --seed {} --num_epochs 1000
+
+#line 1. German monolingual model on Task 1.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang de1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/de1_{seed}/ --max_violation --patience 10 --seed {} --num_epochs 1000
+
+#line 2. English-German bilingual model on Task 1.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en1-de1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en1de1_{seed}/ --max_violation --patience 10 --seed {} 
+
+
+#line 3. English-German bilingual model on Task 1 with c2c loss
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en1-de1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en1de1_c2c_{seed}/ --max_violation --patience 10 --seed {} --sentencepair
+
+#line 4. English-German bilingual model English is downsampled Task 2. German is Task 1.
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de1_ind_{seed}/ --max_violation --patience 10 --seed {} --undersample
+
+#line 5. English-German bilingual model English is downsampled Task 2. German is Task 1. with c2c loss
+python train.py --data_path /roaming/u1257964/multi30k-dataset --data_name m30k  --lang en-de1 --img_dim 2048 --logger_name /roaming/u1257964/vsepp_char/m30k/final/en2de1_ind_c2c_{seed}/ --max_violation --patience 10 --seed {} --undersample --sentencepair
+
