@@ -111,12 +111,7 @@ and given a `--seed`.
 
 If you found this code useful, please cite the following paper:
 
-    @article{faghri2017vse++,
-      title={VSE++: Improving Visual-Semantic Embeddings with Hard Negatives},
-      author={Faghri, Fartash and Fleet, David J and Kiros, Jamie Ryan and Fidler, Sanja},
-      journal={arXiv preprint arXiv:1707.05612},
-      year={2017}
-    }
+    {COMING SOON}
 
 ## License
 
