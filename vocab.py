@@ -2,7 +2,7 @@
 import nltk
 import pickle
 from collections import Counter
-#from pycocotools.coco import COCO
+# from pycocotools.coco import COCO
 import json
 import argparse
 import os

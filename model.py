@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.init
@@ -184,7 +185,8 @@ class EncoderImagePrecomp(nn.Module):
 # RNN Based Language Model
 class EncoderText(nn.Module):
 
-    def __init__(self, vocab_size, word_dim, embed_size, num_layers, use_abs=False):
+    def __init__(self, vocab_size, word_dim, embed_size, num_layers,
+                 use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
@@ -194,6 +196,7 @@ class EncoderText(nn.Module):
         # caption embedding
         self.rnn = nn.GRU(word_dim, embed_size, num_layers, batch_first=True)
 
+        self.init_weights()
 
 
     def init_weights(self, pretrained=False):
@@ -204,7 +207,6 @@ class EncoderText(nn.Module):
         """
         # Embed word ids to vectors
         x = self.embed(x)
-
         packed = pack_padded_sequence(x, lengths, batch_first=True)
 
         # Forward propagate RNN
@@ -224,12 +226,6 @@ class EncoderText(nn.Module):
             out = torch.abs(out)
 
         return out
-    
-    def encode_one(self, x):
-        x = self.embed(x)
-        _ , last = self.rnn(x)
-        return last
-
 
 def cosine_sim(im, s):
     """Cosine similarity between all the image and sentence pairs
@@ -251,9 +247,8 @@ class ContrastiveLoss(nn.Module):
     Compute contrastive loss
     """
 
-    def __init__(self, margin=0, measure=False, max_violation=False, logsumexp=False):
+    def __init__(self, margin=0, measure=False, max_violation=False):
         super(ContrastiveLoss, self).__init__()
-        assert not (max_violation and logsumexp), "Use either max_violation or logsumexp or none. "
         self.margin = margin
         if measure == 'order':
             self.sim = order_sim
@@ -261,8 +256,7 @@ class ContrastiveLoss(nn.Module):
             self.sim = cosine_sim
 
         self.max_violation = max_violation
-        self.logsumexp = logsumexp
-    
+
     def forward(self, im, s):
         # compute image-sentence score matrix
         scores = self.sim(im, s)
@@ -274,12 +268,8 @@ class ContrastiveLoss(nn.Module):
         # caption retrieval
         # compare every diagonal score to scores in its row
         # image retrieval
-        if self.logsumexp:
-            cost_im = scores - d2
-            cost_s = scores - d1
-        else:
-            cost_im = (self.margin + scores - d2).clamp(min=0)
-            cost_s = (self.margin + scores - d1).clamp(min=0)
+        cost_im = (self.margin + scores - d2).clamp(min=0)
+        cost_s = (self.margin + scores - d1).clamp(min=0)
 
         # clear diagonals
         mask = torch.eye(scores.size(0)) > .5
@@ -293,10 +283,8 @@ class ContrastiveLoss(nn.Module):
         if self.max_violation:
             cost_s = cost_s.max(1)[0]
             cost_im = cost_im.max(0)[0]
-        if self.logsumexp:
-            return torch.log(1 + torch.exp(cost_s).sum()) + torch.log(1 + torch.exp(cost_im).sum())
-        else:
-            return cost_s.sum() + cost_im.sum()
+        
+        return cost_s.sum() + cost_im.sum()
 
 
 class VSE(object):
@@ -323,8 +311,7 @@ class VSE(object):
         # Loss and Optimizer
         self.criterion = ContrastiveLoss(margin=opt.margin,
                                          measure=opt.measure,
-                                         max_violation=opt.max_violation,
-                                         logsumexp=opt.logsumexp)
+                                         max_violation=opt.max_violation)
         params = list(self.txt_enc.parameters())
         params += list(self.img_enc.fc.parameters())
         if opt.finetune:
@@ -395,3 +382,4 @@ class VSE(object):
         if self.grad_clip > 0:
             clip_grad_norm(self.params, self.grad_clip)
         self.optimizer.step()
+        return loss

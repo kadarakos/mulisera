@@ -11,9 +11,8 @@ import torch
 from torch.autograd import Variable
 from model import VSE, order_sim
 from collections import OrderedDict
-import random 
+import random
 import argparse
-rseed = 41376566
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -105,7 +104,8 @@ def encode_data(model, data_loader, log_step=10, logging=print):
         cap_embs[ids] = cap_emb.data.cpu().numpy().copy()
 
         # measure accuracy and record loss
-        model.forward_loss(img_emb, cap_emb)
+        val_loss = model.forward_loss(img_emb, cap_emb)
+        val_loss = float(val_loss.detach().cpu().numpy())
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -120,7 +120,7 @@ def encode_data(model, data_loader, log_step=10, logging=print):
                         e_log=str(model.logger)))
         del images, captions
 
-    return img_embs, cap_embs
+    return img_embs, cap_embs, val_loss
 
 
 def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
@@ -172,7 +172,7 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
                     .format(
                         i, sentencepair_loader.length, batch_time=batch_time,
                         e_log=str(model.logger)))
-        
+
         if i * sentencepair_loader.batch_size >= sentencepair_loader.length:
             break
         del capA, capB
@@ -180,9 +180,7 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
 
 def run_eval(model, data_loader, fold5, opt, loader_lang):
     print('Computing results for {}...'.format(loader_lang))
-    img_embs, cap_embs = encode_data(model, data_loader)
-    print('Images: %d, Captions: %d' %
-          (img_embs.shape[0], cap_embs.shape[0]))
+    img_embs, cap_embs, val_loss = encode_data(model, data_loader)
 
     if not fold5:
         if loader_lang in ['en', 'de']:
@@ -196,13 +194,14 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
         ar = (r[0] + r[1] + r[2]) / 3
         ari = (ri[0] + ri[1] + ri[2]) / 3
         rsum = r[0] + r[1] + r[2] + ri[0] + ri[1] + ri[2]
-        r = r + (ar,)  # python tuple concat
-        ri = ri + (ari,)  # python tuple concat
+        r = (loader_lang,) + r + (ar,)  # python tuple concat
+        ri = (loader_lang,) + ri + (ari,)  # python tuple concat
         print("rsum: %.1f" % rsum)
         #print("Average i2t Recall: %.1f" % ar)
-        print("Image to text: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
+        print(" %s Image to text: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
+
         #print("Average t2i Recall: %.1f" % ari)
-        print("Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
+        print(" %s Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
         #print("Text to image: %.1f %.1f %.1f %.1f %.1f" % ri)
     else:
         # 5fold cross-validation, only for MSCOCO
@@ -249,14 +248,14 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
     # load model and options
     checkpoint = torch.load(model_path)
     opt = checkpoint['opt']
-    random.seed(rseed+opt.seed)
-    np.random.seed(rseed+opt.seed)
-    torch.cuda.manual_seed(rseed+opt.seed)
-    torch.cuda.manual_seed_all(rseed+opt.seed)
     if data_path is not None:
         opt.data_path = data_path
+
+    # Never use undersample when testing.
+    opt.undersample = False
+    print(opt)
     
-    # load vocabulary used by the model
+    #Load vocabulary used by the model
     if opt.data_name != "m30k":
         with open(os.path.join(opt.vocab_path,
                                '%s_vocab.pkl' % opt.data_name), 'rb') as f:
@@ -264,28 +263,24 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
             opt.vocab_size = len(vocab)
     else:
         vocab = pickle.load(open(os.path.join(opt.logger_name, 'vocab.pkl')))
-        if opt.langid == True:
-            lang_vocab = pickle.load(open(os.path.join(opt.logger_name, 'langid_vocab.pkl')))
-        else:
-            lang_vocab = None
 
     # construct model
     model = VSE(opt)
 
     # load model state
     model.load_state_dict(checkpoint['model'])
-
     print('Loading dataset')
-    opt.lang = lang
-    langs = lang.split('-')
+    if lang is not None:
+        opt.lang = lang
+    langs = opt.lang.split('-')
     data_loader = get_test_loader(split, opt.data_name, vocab, opt.crop_size,
-                                  opt.batch_size, opt.workers, opt, lang_vocab=lang_vocab)
-    if len(opt.lang.split("-")) > 1:
+                                  opt.batch_size, opt.workers, opt)
+    if len(langs) > 1:
         for data, loader_lang in zip(data_loader, langs):
             loader = data
             run_eval(model, loader, fold5, opt, loader_lang)
     else:
-        run_eval(model, data_loader, fold5, opt)
+        run_eval(model, data_loader, fold5, opt, opt.lang)
 
 
 def i2t(images, captions, npts=None, n=5, measure='cosine', return_ranks=False):
@@ -390,7 +385,7 @@ def t2i(images, captions, n=5, npts=None, measure='cosine', return_ranks=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--data_path", type=str, default=os.environ.get("PT_DATA_DIR"))
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--fold5", action="store_true")
     parser.add_argument("--split", default="val")

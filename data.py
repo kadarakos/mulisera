@@ -5,15 +5,198 @@ import torchvision.transforms as transforms
 import os
 import nltk
 from PIL import Image
-#from pycocotools.coco import COCO
+# from pycocotools.coco import COCO
 import numpy as np
 import json as jsonmod
 from collections import Counter
 from vocab import Vocabulary
 import sys
-import random 
-import itertools 
+import random
+import itertools
 
+# Download required NLTK modules.
+nltk.download('punkt', quiet=True)
+
+
+def get_paths(path, name='coco', use_restval=False):
+    """
+    Returns paths to images and annotations for the given datasets. For MSCOCO
+    indices are also returned to control the data split being used.
+    The indices are extracted from the Karpathy et al. splits using this
+    snippet:
+
+    >>> import json
+    >>> dataset=json.load(open('dataset_coco.json','r'))
+    >>> A=[]
+    >>> for i in range(len(D['images'])):
+    ...   if D['images'][i]['split'] == 'val':
+    ...     A+=D['images'][i]['sentids'][:5]
+    ...
+
+    :param name: Dataset names
+    :param use_restval: If True, the the `restval` data is included in train.
+    """
+    roots = {}
+    ids = {}
+    if 'coco' == name:
+        imgdir = os.path.join(path, 'images')
+        capdir = os.path.join(path, 'annotations')
+        roots['train'] = {
+            'img': os.path.join(imgdir, 'train2014'),
+            'cap': os.path.join(capdir, 'captions_train2014.json')
+        }
+        roots['val'] = {
+            'img': os.path.join(imgdir, 'val2014'),
+            'cap': os.path.join(capdir, 'captions_val2014.json')
+        }
+        roots['test'] = {
+            'img': os.path.join(imgdir, 'val2014'),
+            'cap': os.path.join(capdir, 'captions_val2014.json')
+        }
+        roots['trainrestval'] = {
+            'img': (roots['train']['img'], roots['val']['img']),
+            'cap': (roots['train']['cap'], roots['val']['cap'])
+        }
+        ids['train'] = np.load(os.path.join(capdir, 'coco_train_ids.npy'))
+        ids['val'] = np.load(os.path.join(capdir, 'coco_dev_ids.npy'))[:5000]
+        ids['test'] = np.load(os.path.join(capdir, 'coco_test_ids.npy'))
+        ids['trainrestval'] = (
+            ids['train'],
+            np.load(os.path.join(capdir, 'coco_restval_ids.npy')))
+        if use_restval:
+            roots['train'] = roots['trainrestval']
+            ids['train'] = ids['trainrestval']
+    elif 'f8k' == name:
+        imgdir = os.path.join(path, 'images')
+        cap = os.path.join(path, 'dataset_flickr8k.json')
+        roots['train'] = {'img': imgdir, 'cap': cap}
+        roots['val'] = {'img': imgdir, 'cap': cap}
+        roots['test'] = {'img': imgdir, 'cap': cap}
+        ids = {'train': None, 'val': None, 'test': None}
+    elif 'f30k' == name:
+        imgdir = os.path.join(path, 'images')
+        cap = os.path.join(path, 'dataset_flickr30k.json')
+        roots['train'] = {'img': imgdir, 'cap': cap}
+        roots['val'] = {'img': imgdir, 'cap': cap}
+        roots['test'] = {'img': imgdir, 'cap': cap}
+        ids = {'train': None, 'val': None, 'test': None}
+
+    return roots, ids
+
+
+class CocoDataset(data.Dataset):
+    """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
+
+    def __init__(self, root, json, vocab, transform=None, ids=None):
+        """
+        Args:
+            root: image directory.
+            json: coco annotation file path.
+            vocab: vocabulary wrapper.
+            transform: transformer for image.
+        """
+        self.root = root
+        # when using `restval`, two json files are needed
+        if isinstance(json, tuple):
+            self.coco = (COCO(json[0]), COCO(json[1]))
+        else:
+            self.coco = (COCO(json),)
+            self.root = (root,)
+        # if ids provided by get_paths, use split-specific ids
+        if ids is None:
+            self.ids = list(self.coco.anns.keys())
+        else:
+            self.ids = ids
+
+        # if `restval` data is to be used, record the break point for ids
+        if isinstance(self.ids, tuple):
+            self.bp = len(self.ids[0])
+            self.ids = list(self.ids[0]) + list(self.ids[1])
+        else:
+            self.bp = len(self.ids)
+        self.vocab = vocab
+        self.transform = transform
+
+    def __getitem__(self, index):
+        """This function returns a tuple that is further passed to collate_fn
+        """
+        vocab = self.vocab
+        root, caption, img_id, path, image = self.get_raw_item(index)
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        # Convert caption (string) to word ids.
+        tokens = nltk.tokenize.word_tokenize(
+            str(caption).lower().decode('utf-8'))
+        caption = []
+        caption.append(vocab('<start>'))
+        caption.extend([vocab(token) for token in tokens])
+        caption.append(vocab('<end>'))
+        target = torch.Tensor(caption)
+        return image, target, index, img_id
+
+    def get_raw_item(self, index):
+        if index < self.bp:
+            coco = self.coco[0]
+            root = self.root[0]
+        else:
+            coco = self.coco[1]
+            root = self.root[1]
+        ann_id = self.ids[index]
+        caption = coco.anns[ann_id]['caption']
+        img_id = coco.anns[ann_id]['image_id']
+        path = coco.loadImgs(img_id)[0]['file_name']
+        image = Image.open(os.path.join(root, path)).convert('RGB')
+
+        return root, caption, img_id, path, image
+
+    def __len__(self):
+        return len(self.ids)
+
+
+class FlickrDataset(data.Dataset):
+    """
+    Dataset loader for Flickr30k and Flickr8k full datasets.
+    """
+
+    def __init__(self, root, json, split, vocab, transform=None):
+        self.root = root
+        self.vocab = vocab
+        self.split = split
+        self.transform = transform
+        self.dataset = jsonmod.load(open(json, 'r'))['images']
+        self.ids = []
+        for i, d in enumerate(self.dataset):
+            if d['split'] == split:
+                self.ids += [(i, x) for x in range(len(d['sentences']))]
+
+    def __getitem__(self, index):
+        """This function returns a tuple that is further passed to collate_fn
+        """
+        vocab = self.vocab
+        root = self.root
+        ann_id = self.ids[index]
+        img_id = ann_id[0]
+        caption = self.dataset[img_id]['sentences'][ann_id[1]]['raw']
+        path = self.dataset[img_id]['filename']
+
+        image = Image.open(os.path.join(root, path)).convert('RGB')
+        if self.transform is not None:
+            image = self.transform(image)
+
+        # Convert caption (string) to word ids.
+        tokens = nltk.tokenize.word_tokenize(
+            str(caption).lower().decode('utf-8'))
+        caption = []
+        caption.append(vocab('<start>'))
+        caption.extend([vocab(token) for token in tokens])
+        caption.append(vocab('<end>'))
+        target = torch.Tensor(caption)
+        return image, target, index, img_id
+
+    def __len__(self):
+        return len(self.ids)
 
 
 class PrecompDataset(data.Dataset):
@@ -22,10 +205,9 @@ class PrecompDataset(data.Dataset):
     Possible options: f8k, f30k, coco, 10crop
     """
 
-    def __init__(self, data_path, data_split, vocab, char_level=False):
+    def __init__(self, data_path, data_split, vocab):
         self.vocab = vocab
         loc = data_path + '/'
-        self.char_level = char_level
         # Captions
         self.captions = []
         with open(loc+'%s_caps.txt' % data_split, 'rb') as f:
@@ -43,15 +225,6 @@ class PrecompDataset(data.Dataset):
         if data_split == 'dev':
             self.length = 5000
         # Re-write dictionary to character level.
-        if self.char_level:
-            chars = set(list("".join(vocab.idx2word.values())))
-            self.vocab = Vocabulary()
-            self.vocab.add_word('<pad>')
-            self.vocab.add_word('<start>')
-            self.vocab.add_word('<end>')
-            self.vocab.add_word('<unk>')
-            for c in chars:
-                self.vocab.add_word(c)
 
     def __getitem__(self, index):
         # handle the image redundancy
@@ -63,8 +236,6 @@ class PrecompDataset(data.Dataset):
         # Convert caption (string) to word ids.
         tokens = nltk.tokenize.word_tokenize(
             str(caption).lower().decode('utf-8'))
-        if self.char_level:
-            tokens = list(" ".join(tokens))
         caption = []
         caption.append(vocab('<start>'))
         caption.extend([vocab(token) for token in tokens])
@@ -78,13 +249,37 @@ class PrecompDataset(data.Dataset):
 
 class Multi30KDataset(data.Dataset):
     """
-    Load precomputed captions and image features
-    Possible options: f8k, f30k, coco, 10crop
+    Load precomputed captions and image features for the Multi30K data set.
+
     """
 
-    def __init__(self, data_path, data_split, 
+    def __init__(self, data_path, data_split,
                  vocab, lang, undersample=False, log_path=None,
-                 half=False, disalligned=False):
+                 half=False, disaligned=False):
+        """
+        Parameters
+        ----------
+        data_path : str
+            Root of the multi30k data set.
+        data_split : str
+            'train', 'val' or 'test'           
+        vocab : Vocabulary object or None
+            When None create a vocabulary, otherwise use given.
+        lang : str
+            Languages to load from multi30k delimited by '-' e.g.: en-de-fr.
+            'en' and 'de' for English and German comparable and 'en1', 'de1', 'fr', 'cs'
+            for the translation pairs in English, German, French and Czech.
+        undersample : bool
+            Use only one caption on the comparable portion.
+        log_path : str
+            Path where the model is checkpointed.
+        half : bool
+            Use only half of the images on the comparable English or German.
+        disaligned : bool
+            When using half and both English and German, choose non-overlapping
+            images for the two languages.
+        """
+        
         self.lang = lang.split("-")
         self.data_split = data_split
         self.vocab = vocab
@@ -92,20 +287,25 @@ class Multi30KDataset(data.Dataset):
         self.undersample = undersample
         self.log_path = log_path
         self.half = half
-        self.disalligned = disalligned
+        self.disaligned = disaligned
         #Captions
         self.captions = []
         l_stack = []
         # First let's do langauges in task 2
-        self.imgpath = os.path.join(self.img_path, self.data_split +'-resnet50-avgpool.npy')
+        if self.data_split == 'test':
+            split = 'test_2016_flickr'
+        else:
+            split = data_split
+
+        self.imgpath = os.path.join(self.img_path, split +'-resnet50-avgpool.npy')
         self.image_vectors = np.load(self.imgpath).astype("float32")
         self.images = []
         # When halving task 2 dataset
         if self.half and self.data_split == 'train':
             ids = np.arange(0, 29000)
             np.random.shuffle(ids)
-            # Separating task 2. data to non-overlapping pairs. 
-            if self.disalligned:
+            # Separating task 2. data to non-overlapping pairs.
+            if self.disaligned:
                 self.en_ids, self.de_ids = ids[:14500], ids[14500:]
             # Overlapping pairs.
             else:
@@ -127,14 +327,17 @@ class Multi30KDataset(data.Dataset):
                 else:
                     split = data_split
                 f = open(data_path+'/data/task2/tok/'+'{}.lc.norm.tok.{}.{}'.format(split, i, l), 'rb').read().split("\n")
+                # Prepend Language id (EN, FR, DE, CS) to the captions.
                 caps.append(f[:-1])
+
             # Pick one caption per image.
             if self.undersample:
+                # Pick all captions per image.
                 captions_candidate = [random.choice(tup) for tup in zip(*caps)]
-            # Pick all captions per image.
-            else:            
+            else:
                 captions_candidate =  zip(*caps)
-            # When running the half-task2 experiments, filter enlgish, german caps and images based on imgids.
+
+            # When running the half-task2 experiments, filter english, german caps and images based on imgids.
             if self.half and self.data_split == 'train':
                 if l == 'en':
                     captions_candidate = [captions_candidate[x] for x in self.en_ids]
@@ -144,13 +347,15 @@ class Multi30KDataset(data.Dataset):
                     image_vectors = self.image_vectors[self.de_ids]
             else:
                 image_vectors = self.image_vectors
+
             # For task 2 we replicate images 5 times when not undersampling.
             if not self.undersample:
                 images = np.repeat(image_vectors, 5, axis=0)
                 captions_candidate = [val for tup in captions_candidate for val in tup]
-            else:    
+            else:
+                # Otherwise take the vectors as they are
                 images = image_vectors
-            # Otherwise take the vectors as they are
+
             self.captions += captions_candidate
             self.images.append(images)
             print(l, len(captions_candidate))
@@ -169,7 +374,7 @@ class Multi30KDataset(data.Dataset):
                     for line in f:
                         c = line.strip()
                         self.captions.append(c)
-            
+
         self.images = np.concatenate(self.images, axis=0)
         if vocab is not None:
             self.vocab = vocab
@@ -209,11 +414,10 @@ class Multi30KDataset(data.Dataset):
         for i, word in enumerate(words):
             vocab.add_word(word)
         print('Num words:', vocab.idx)
-        pickle.dump(vocab, 
-                open(os.path.join(self.log_path, 'vocab.pkl'), 'w'), 
+        pickle.dump(vocab,
+                open(os.path.join(self.log_path, 'vocab.pkl'), 'w'),
                     pickle.HIGHEST_PROTOCOL)
         return vocab
-
 
     def __getitem__(self, index):
         #TODO not replicate image vectotrs a billion times
@@ -224,6 +428,7 @@ class Multi30KDataset(data.Dataset):
 
         # Convert caption (string) to word ids.
         caption = []
+        # We're not using the language ID token
         tokenized = nltk.tokenize.word_tokenize(
             str(tokens).lower().decode('utf-8'))
         caption.append(vocab('<start>'))
@@ -238,20 +443,38 @@ class Multi30KDataset(data.Dataset):
 
 class M30KSentencePairDataset():
     """
-    Data iterator to randomly pick batches of sentence pairs 
-    from M30K belonging to the same image.
-    Doesnt implement __len__ or __getitem__ its just infinite.
+    Generates sentence pairs for the Multi30K dataset.
+
+    Each pair is defined as belonging to the same image, but
+    to different languages. Iterates throught all possible 
+    such pairs. Doesn't __len__ or __getitem__ 
+    its infinite.
     """
 
     def __init__(self, data_path, data_split, batch_size,
-                 vocab, lang, undersample=False,
-                 char_level=False, langid=False):
+                 vocab, lang, undersample=False):
+        """
+        Parameters
+        ----------
+        data_path : str
+            Root of the multi30k data set.
+        data_split : str
+            'train', 'val' or 'test'           
+        batch_size : int
+            Number of samples per batch.
+        vocab : Vocabulary object 
+            Vocabulary object to use to map words to integers.
+        lang : str
+            Languages to load from multi30k delimited by '-' e.g.: en-de-fr.
+            'en' and 'de' for English and German comparable and 'en1', 'de1', 'fr', 'cs'
+            for the translation pairs in English, German, French and Czech.
+        undersample : bool
+            Use only one caption on the comparable portion.
+        """
         self.lang = lang.split("-")
-        self.langid = langid
         self.data_split = data_split
         self.batch_size = batch_size
         self.vocab = vocab
-        self.char_level = char_level
         self.vocab = vocab
         self.undersample = undersample
         # Captions
@@ -274,8 +497,6 @@ class M30KSentencePairDataset():
             for j in range(1, 6):
                 f = open(data_path+'/data/task2/tok/'+'{}.lc.norm.tok.{}.{}'.format(self.data_split, j, l), 'rb').read().split("\n")
                 # Prepend Language id (EN, FR, DE, CS) to the captions.
-                if self.langid:
-                    f = map(lambda x: l.upper() + " " + x, f)
                 caps.append(f[:-1])
             # Store each languages captions in a separate list.
             # When undersample, pick one out of 5 possible
@@ -294,8 +515,6 @@ class M30KSentencePairDataset():
                 with open(data_path +'/data/task1/tok/' + '{}.lc.norm.tok.{}'.format(self.data_split, l), 'rb') as f:
                     for line in f:
                         c = line.strip()
-                        if self.langid:
-                            c = l.upper() + " " + c
                         caps.append(c)
                 self.captions.append(caps)
         # Create a bigass list of all possible pairs
@@ -315,29 +534,18 @@ class M30KSentencePairDataset():
         print('Number of sentencepairs:', self.length)
         # Image features
         self.datasets = len(self.captions)
-        if self.char_level:
-            chars = set(list("".join(self.vocab.idx2word.values())))
-            self.vocab = Vocabulary()
-            self.vocab.add_word('<pad>')
-            self.vocab.add_word('<start>')
-            self.vocab.add_word('<end>')
-            self.vocab.add_word('<unk>')
-            for c in chars:
-                self.vocab.add_word(c)
-    
+
     def tokenize(self, cap):
         '''Raw string caption to torch tensor of ints.'''
         tokens = nltk.tokenize.word_tokenize(
             str(cap).lower().decode('utf-8'))
-        if self.char_level:
-            tokens = list(" ".join(tokens))
         caption = []
         caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])
         caption.append(self.vocab('<end>'))
         caption = torch.Tensor(caption)
         return caption
- 
+
     def shuffle_data(self):
         """
         Shuffle the full dataset.
@@ -352,10 +560,9 @@ class M30KSentencePairDataset():
         self.bottom = 0
         self.top = self.batch_size
         self.shuffle_data()
-    
+
     def next(self):
         """Use sampling with replacement, infinite iterator."""
-        #TODO not replicate image vectotrs a billion times
         # Take 2 languages
         capsA, capsB = zip(*self.allpairs[self.bottom:self.top])
         if self.top == self.length:
@@ -376,8 +583,6 @@ class M30KSentencePairDataset():
             captionsB.append(capB)
             lengthsA.append(len(capA))
             lengthsB.append(len(capB))
-            # lengthsA.append(len(capA))
-            # lengthsB.append(len(capB))
         # Have to sort for the CUDA padding stuff.
         targetsA = torch.zeros(len(captionsA), max(lengthsA)).long()
         for i, cap in enumerate(captionsA):
@@ -387,7 +592,6 @@ class M30KSentencePairDataset():
         for i, cap in enumerate(captionsB):
             end = lengthsB[i]
             targetsB[i, :end] = cap[:end]
-        # Convert caption (string) to word ids.
         return targetsA, targetsB, lengthsA, lengthsB
 
     def __iter__(self):
@@ -451,21 +655,44 @@ def get_loader_single(data_name, split, root, json, vocab, transform,
 
 
 def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
-                       shuffle=True, num_workers=2, lang=False, langid=False,
-                       lang_vocab=None):
+                       shuffle=True, num_workers=2, lang=False):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
-    lang = lang if lang else opt.lang
-    dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name,
-            lang=lang, undersample=opt.undersample, half=opt.half, 
-            disalligned=opt.disalligned)
-    data_loader = torch.utils.data.DataLoader(dataset=dset,
-                                              batch_size=batch_size,
-                                              shuffle=shuffle,
-                                              pin_memory=True,
-                                              collate_fn=collate_fn)
-    return data_loader, dset.vocab
+    if opt.data_name == "m30k":
+        lang = lang if lang else opt.lang
+        dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
+                               lang=lang, undersample=opt.undersample, 
+                               half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned)
+        data_loader = torch.utils.data.DataLoader(dataset=dset,
+                                                  batch_size=batch_size,
+                                                  shuffle=shuffle,
+                                                  pin_memory=True,
+                                                  collate_fn=collate_fn)
+        return data_loader, dset.vocab
+    else:
+        dset = PrecompDataset(data_path, data_split, vocab)
+        data_loader = torch.utils.data.DataLoader(dataset=dset,
+                                                  batch_size=batch_size,
+                                                  shuffle=shuffle,
+                                                  pin_memory=True,
+                                                  collate_fn=collate_fn)
+        return data_loader
 
 
+def get_transform(data_name, split_name, opt):
+    normalizer = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                      std=[0.229, 0.224, 0.225])
+    t_list = []
+    if split_name == 'train':
+        t_list = [transforms.RandomResizedCrop(opt.crop_size),
+                  transforms.RandomHorizontalFlip()]
+    elif split_name == 'val':
+        t_list = [transforms.Resize(256), transforms.CenterCrop(224)]
+    elif split_name == 'test':
+        t_list = [transforms.Resize(256), transforms.CenterCrop(224)]
+
+    t_end = [transforms.ToTensor(), normalizer]
+    transform = transforms.Compose(t_list + t_end)
+    return transform
 
 
 def get_loaders(data_name, vocab, crop_size, batch_size, num_workers, opt):
@@ -475,90 +702,131 @@ def get_loaders(data_name, vocab, crop_size, batch_size, num_workers, opt):
     '''
     dpath = os.path.join(opt.data_path, data_name)
 
-    langs = opt.lang.split("-")
-    # Run this to get vocabulary for all languages
-    # lang_vocab is the separate language ID vocabulary
-    # the None means we pass is no existing vocab object.
-    t_loader, t_vocab = get_precomp_loader(dpath, 'train',
-                                                    None, opt,
-                                                    batch_size,
-                                                    shuffle=True,
-                                                    num_workers=num_workers)
+    if opt.data_name.endswith('_precomp'):
+        train_loader = get_precomp_loader(dpath, 'train', vocab, opt,
+                                          batch_size, True, num_workers)
+        val_loader = get_precomp_loader(dpath, "dev", vocab, opt,
+                                        batch_size, False, num_workers)
+    elif opt.data_name == "m30k":
+        langs = opt.lang.split("-")
+        # Run this to get vocabulary for all languages
+        # lang_vocab is the separate language ID vocabulary
+        # the None means we pass is no existing vocab object.
+        t_loader, t_vocab = get_precomp_loader(dpath, 'train',
+                                                        None, opt,
+                                                        batch_size,
+                                                        shuffle=True,
+                                                        num_workers=num_workers)
 
-    # Set the vocabulary size to be used by the model
-    opt.vocab_size = t_vocab.idx
-    
-    print("Validation sets")
-    if len(langs) == 1:
-        # If only one language just use train vocab for the val-set and we are done.
-        val_loader, _ = get_precomp_loader(dpath, "val", t_vocab,
-                                              opt, batch_size,
-                                              shuffle=False, num_workers=num_workers)
-        train_loader = t_loader
+        # Set the vocabulary size to be used by the model
+        opt.vocab_size = t_vocab.idx
+
+        print("Validation sets")
+        if len(langs) == 1:
+            # If only one language just use train vocab for the val-set and we are done.
+            val_loader, _ = get_precomp_loader(dpath, "val", t_vocab,
+                                                  opt, batch_size,
+                                                  shuffle=False, num_workers=num_workers)
+            train_loader = t_loader
+        else:
+            # If there are multiple languages create mutliple val sets using the joint vocab.
+            val_loader = []
+            for l in langs:
+                vloader, _ = get_precomp_loader(dpath, 'val', t_vocab,
+                                                   opt, batch_size,
+                                                   shuffle=False,
+                                                   num_workers=num_workers,
+                                                   lang=l)
+                val_loader.append(vloader)
+                #print(l, vloader.__len__())
+
+            # Separate training set for each language.
+            train_loader = []
+            for l in langs:
+                tloader, _ = get_precomp_loader(dpath, 'train',
+                                                   t_vocab, opt,
+                                                   batch_size,
+                                                   shuffle=True,
+                                                   num_workers=num_workers,
+                                                   lang=l)
+                train_loader.append(tloader)
+                print(l, tloader.__len__())
+            if opt.sentencepair:
+                sentencepair_loader = M30KSentencePairDataset(opt.data_path, 'train',
+                                                              opt.batch_size,
+                                                              t_vocab,
+                                                              opt.lang,
+                                                              undersample=opt.undersample)
+                sentencepair_loader_val = M30KSentencePairDataset(opt.data_path, 'val',
+                                                              opt.batch_size,
+                                                              t_vocab,
+                                                              opt.lang,
+                                                              undersample=opt.undersample)
+                train_loader.append(sentencepair_loader)
+                val_loader.append(sentencepair_loader_val)
     else:
-        # If there are multiple languages create mutliple val sets using the joint vocab.
-        val_loader = []
-        for l in langs:
-            vloader, _ = get_precomp_loader(dpath, 'val', t_vocab,
-                                               opt, batch_size, 
-                                               shuffle=False,
-                                               num_workers=num_workers,
-                                               lang=l)
-            val_loader.append(vloader)
-            #print(l, vloader.__len__())
+        # Build Dataset Loader
+        roots, ids = get_paths(dpath, data_name, opt.use_restval)
 
-        # Separate training sets for each language.
-        train_loader = []
-        for l in langs:
-            tloader, _ = get_precomp_loader(dpath, 'train',
-                                               t_vocab, opt,
-                                               batch_size, 
-                                               shuffle=True, 
-                                               num_workers=num_workers,
-                                               lang=l,
-                                               lang_vocab=l_vocab)
-            train_loader.append(tloader)
-            print(l, tloader.__len__())
-        
-        if opt.sentencepair:
-            sentencepair_loader = M30KSentencePairDataset(opt.data_path, 'train',
-                                                          opt.batch_size, 
-                                                          t_vocab,
-                                                          opt.lang,
-                                                          langid=opt.langid,
-                                                          undersample=opt.undersample)
-            sentencepair_loader_val = M30KSentencePairDataset(opt.data_path, 'val',
-                                                          opt.batch_size, 
-                                                          t_vocab,
-                                                          opt.lang,
-                                                          langid=opt.langid,
-                                                          undersample=opt.undersample)
-            train_loader.append(sentencepair_loader)
-            val_loader.append(sentencepair_loader_val)
+        transform = get_transform(data_name, 'train', opt)
+        train_loader = get_loader_single(opt.data_name, 'train',
+                                         roots['train']['img'],
+                                         roots['train']['cap'],
+                                         vocab, transform, ids=ids['train'],
+                                         batch_size=batch_size, shuffle=True,
+                                         num_workers=num_workers,
+                                         collate_fn=collate_fn)
+
+        transform = get_transform(data_name, 'val', opt)
+        val_loader = get_loader_single(opt.data_name, 'val',
+                                       roots['val']['img'],
+                                       roots['val']['cap'],
+                                       vocab, transform, ids=ids['val'],
+                                       batch_size=batch_size, shuffle=False,
+                                       num_workers=num_workers,
+                                       collate_fn=collate_fn)
+
     return train_loader, val_loader
 
 
 def get_test_loader(split_name, data_name, vocab, crop_size, batch_size,
-                    num_workers, opt, lang_vocab=None):
+                    num_workers, opt):
     dpath = os.path.join(opt.data_path, data_name)
 
-    # the None means we pass is no existing vocab object.
-    langs = opt.lang.split("-")
-    if len(langs) == 1:
-        test_loader, _ = get_precomp_loader(dpath, split_name, vocab, opt,
-                                           batch_size, False, num_workers)
+    if opt.data_name.endswith('_precomp'):
+        test_loader = get_precomp_loader(dpath, split_name, vocab, opt,
+                                         batch_size, False, workers)
+    elif opt.data_name == "m30k":
+        # the None means we pass is no existing vocab object.
+        langs = opt.lang.split("-")
+        if len(langs) == 1:
+            test_loader, _ = get_precomp_loader(dpath, split_name, vocab, opt,
+                                               batch_size, False, num_workers)
+        else:
+            # If there are multiple languages create mutliple test sets
+            # using the joint vocab.
+            test_loader = []
+            for l in langs:
+                vloader, v_vocab = get_precomp_loader(dpath,
+                                                                  split_name,
+                                                                  vocab, opt,
+                                                                  batch_size,
+                                                                  shuffle=False,
+                                                                  num_workers=num_workers,
+                                                                  lang=l)
+                test_loader.append(vloader)
+
     else:
-        # If there are multiple languages create mutliple test sets
-        # using the joint vocab.
-        test_loader = []
-        for l in langs:
-            vloader, v_vocab = get_precomp_loader(dpath,
-                                                  split_name,
-                                                  vocab, opt,
-                                                  batch_size,
-                                                  shuffle=False,
-                                                  num_workers=num_workers, 
-                                                  lang=l)
-            test_loader.append(vloader)  
+        # Build Dataset Loader
+        roots, ids = get_paths(dpath, data_name, opt.use_restval)
+
+        transform = get_transform(data_name, split_name, opt)
+        test_loader = get_loader_single(opt.data_name, split_name,
+                                        roots[split_name]['img'],
+                                        roots[split_name]['cap'],
+                                        vocab, transform, ids=ids[split_name],
+                                        batch_size=batch_size, shuffle=False,
+                                        num_workers=num_workers,
+                                        collate_fn=collate_fn)
 
     return test_loader

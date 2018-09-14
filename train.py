@@ -21,23 +21,25 @@ rseed = 41376566
 def main():
     # Hyper Parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', default='/w/31/faghri/vsepp_data/',
+    parser.add_argument('--data_path', default=".",
                         help='path to datasets')
-    parser.add_argument('--data_name', default='precomp',
+    parser.add_argument('--data_name', default='m30k',
                         help='{coco,f8k,f30k,10crop}_precomp|coco|f8k|f30k|m30k')
     parser.add_argument('--lang', default='en',
                         help='Which language(s) to use from m30k, en-de, trains on en+de.')
     parser.add_argument('--sentencepair', action='store_true',
                         help='Train caption-caption ranking as well.')
+    parser.add_argument('--sentencepair_p', default=0.5, type=float,
+                        help='Probability of training on caption-caption and not image-caption.')
     parser.add_argument('--primary', default=None,
                         help='Which language to monitor for early stopping. Multiple with l1-l2-l3')
     parser.add_argument('--undersample', action='store_true',
                         help='Pick only one of the 5 possilbe captions for m30k task 2.')
     parser.add_argument('--half', action='store_true',
                         help='Use only half of the M30K from task 2.')
-    parser.add_argument('--disalligned', action='store_true',
+    parser.add_argument('--disaligned', action='store_true',
                         help='Use only half of the M30K from task 2.')
-    parser.add_argument('--vocab_path', default='./vocab/',
+    parser.add_argument('--vocab_path', default='.',
                         help='Path to saved vocabulary pickle files.')
     parser.add_argument('--margin', default=0.2, type=float,
                         help='Rank loss margin.')
@@ -67,15 +69,15 @@ def main():
                         help='Number of steps to print and record the log.')
     parser.add_argument('--val_step', default=500, type=int,
                         help='Number of steps to run validation.')
-    parser.add_argument('--logger_name', default='runs/runX',
-                        help='Path to parent directory to save the models and Tensorboard log.')
+    parser.add_argument('--logger_path', default='.', 
+                        help='Path where to save the model and Tensorboard log.')
+    parser.add_argument('--logger_name',
+                        help='Name of the folder where to save the model and Tensorboard log.')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
-    parser.add_argument('--max_violation', action='store_true',
+    parser.add_argument('--sum_violation', dest="max_violation", action='store_false',
                         help='Use max instead of sum in the rank loss.')
-    parser.add_argument('--logsumexp', action='store_true',
-                        help='Use smooth LogSumExp instead of hard max in the loss.')
-    parser.add_argument('--img_dim', default=4096, type=int,
+    parser.add_argument('--img_dim', default=2048, type=int,
                         help='Dimensionality of the image embedding.')
     parser.add_argument('--finetune', action='store_true',
                         help='Fine-tune the image encoder.')
@@ -96,29 +98,36 @@ def main():
     parser.add_argument('--seed', default=42, type=int,
                         help='Random seed.')
     opt = parser.parse_args()
+
+    if torch.__version__ >= "0.3":
+        opt.reset_train = True
+
+    opt.vocab_path = os.path.join(opt.vocab_path, "vocab")
+    if opt.logger_name is None:
+        name = "lang{}_half-{}_undersample-{}_disaligned-{}_sentencepair-{}_primary-{}_epochs-{}"
+        name = name.format(opt.lang, opt.half, opt.undersample, opt.disaligned, opt.sentencepair, opt.primary, opt.num_epochs)
+        opt.logger_name = os.path.join(opt.data_name, name)
+            
+    opt.logger_name = os.path.join(opt.logger_path, opt.logger_name, str(opt.seed))
     print(opt)
     random.seed(rseed+opt.seed)
     np.random.seed(rseed+opt.seed)
     torch.cuda.manual_seed(rseed+opt.seed)
     torch.cuda.manual_seed_all(rseed+opt.seed)
-    opt.logger_name = opt.logger_name + '/{}_{}'.format(opt.lang, 
-                                                       opt.seed)
-    if opt.sentencepair:
-        opt.logger_name += '_c2c'
-    if opt.undersample:
-        opt.logger_name += '_undersample'
-    print("Checkpointing in {}".format(opt.logger_name))
+
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
     tb_logger.configure(opt.logger_name, flush_secs=5)
-
-    # Load Vocabulary Wrapper
+    
+    # For multi30k compute vocabulary mappings on the fly.
     if opt.data_name == "m30k":
         vocab = None
+        langs = opt.lang.split("-")
+    # Load Vocabulary Wrapper for COCO or F30K
     else:
         vocab = pickle.load(open(os.path.join(
             opt.vocab_path, '%s_vocab.pkl' % opt.data_name), 'rb'))
         opt.vocab_size = len(vocab)
-
+        langs = [opt.data_name]
     # Load data loaders
     train_loader, val_loader = data.get_loaders(
         opt.data_name, vocab, opt.crop_size, opt.batch_size, opt.workers, opt)
@@ -138,15 +147,15 @@ def main():
             model.Eiters = checkpoint['Eiters']
             print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
                   .format(opt.resume, start_epoch, best_rsum))
-            validate(opt, val_loader, model)
+            validate(opt, val_loader, model, "")
         else:
             print("=> no checkpoint found at '{}'".format(opt.resume))
-    langs = opt.lang.split("-")
 
-    if len(langs) == 1:
+    if len(langs) == 1 or opt.data_name != 'm30k':
 
         # Train the Model on a single data set
         best_rsum = 0
+        model.train_start()
         for epoch in range(opt.num_epochs):
             if opt.reset_train:
                 # Always reset to train mode, this is not the default behavior
@@ -178,7 +187,7 @@ def main():
                 if patience_count == opt.patience:
                     print("No improvement in {} epochs, stoppin".format(patience_count))
                     break
-                    
+
     else:
         joint_train(opt, train_loader, model, val_loader)
 
@@ -188,9 +197,6 @@ def train(opt, train_loader, model, epoch, val_loader):
     data_time = AverageMeter()
     train_logger = LogCollector()
     best_score = 0
-    # switch to train mode
-    #model.train_start()
-
     end = time.time()
     for i, train_data in enumerate(train_loader):
 
@@ -201,7 +207,7 @@ def train(opt, train_loader, model, epoch, val_loader):
         model.logger = train_logger
 
         # Update the model
-        model.train_emb(*train_data)
+        loss = model.train_emb(*train_data)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -223,14 +229,11 @@ def train(opt, train_loader, model, epoch, val_loader):
         tb_logger.log_value('step', i, step=model.Eiters)
         tb_logger.log_value('batch_time', batch_time.val, step=model.Eiters)
         tb_logger.log_value('data_time', data_time.val, step=model.Eiters)
+        tb_logger.log_value('train', float(loss.detach().cpu().numpy()), step=model.Eiters)
+        tb_logger.log_value('c2c', 0., step=model.Eiters)
         model.logger.tb_log(tb_logger, step=model.Eiters)
 
-        # validate at every val_step
-        #if model.Eiters % opt.val_step == 0:
-        #    validate(opt, val_loader, model, "")
 
-
-#TODO Finish this bitch.
 def joint_train(opt, train_loader, model, val_loader):
     # average meters to record the training statistics
     batch_time = AverageMeter()
@@ -242,8 +245,7 @@ def joint_train(opt, train_loader, model, val_loader):
     langs = opt.lang.split("-")
     # switch to train mode
     model.train_start()
-    # Concatenate all data sets into on big set.
-    # Sentence pair data is the last element of the train loaders.
+    # Sentencepair is always the last data loader in the list
     if opt.sentencepair:
         sentencepair_loader = train_loader.pop()
         sentencepair_loader_val = val_loader.pop()
@@ -251,16 +253,13 @@ def joint_train(opt, train_loader, model, val_loader):
     train_loader_its = list(map(iter, train_loader))
     end = time.time()
     patience_count = 0
-    batches_seen = {k: 0 for k in range(len(langs))}
-    print(batches_seen)
     if opt.primary:
         primary = opt.primary.split("-")
     while not stop:
         iters += 1
         # Pick a data set and batch
         ind = random.randint(0, len(train_loader)-1)
-        batches_seen[ind] += 1
-        train_cap2cap = random.random() < 0.5 and opt.sentencepair
+        train_cap2cap = random.random() < opt.sentencepair_p and opt.sentencepair
         if opt.reset_train:
             # Always reset to train mode, this is not the default behavior
             model.train_start()
@@ -270,7 +269,9 @@ def joint_train(opt, train_loader, model, val_loader):
         # make sure train logger is used
         model.logger = train_logger
 
-        # Train with image-sentence ranking batch.
+        loss = None
+        loss_c2c = None
+        # Train caption-caption ranking.
         if train_cap2cap and opt.sentencepair:
             capA, capB, lenA, lenB = next(sentencepair_loader)
             captionsA = Variable(capA)
@@ -293,16 +294,19 @@ def joint_train(opt, train_loader, model, val_loader):
                 revA, revB = revA.cuda(), revB.cuda()
             model.Eiters += 1
             model.logger.update('Eit', model.Eiters)
+            # Pass length sorted captions for encoding
             capA_emb = model.txt_enc(captionsA[indsA], sorted(lenA, reverse=True))
             capB_emb = model.txt_enc(captionsB[indsB], sorted(lenB, reverse=True))
             model.optimizer.zero_grad()
-            loss = model.forward_loss(capA_emb[revA], capB_emb[revB])
+            # Unsort captions for the loss computation
+            loss_c2c = model.forward_loss(capA_emb[revA], capB_emb[revB])
             # compute gradient and do SGD step
-            loss.backward()
+            loss_c2c.backward()
             if model.grad_clip > 0:
                 clip_grad_norm(model.params, model.grad_clip)
             model.optimizer.step()
             # Don't count this as an iter
+        # Train image-sentence ranking.
         else:
             tloader = train_loader_its[ind]
             # Call next element of if its exhausted re-init the DatasetLoaderIterators
@@ -310,7 +314,9 @@ def joint_train(opt, train_loader, model, val_loader):
                 train_data = next(tloader)
             except StopIteration:
                 train_loader_its = map(iter, train_loader)
-            model.train_emb(*train_data)
+                tloader = train_loader_its[ind]
+                train_data = next(tloader)
+            loss = model.train_emb(*train_data)
         # Train with sentence-pair ranking batch.
         batch_time.update(time.time() - end)
         end = time.time()
@@ -328,13 +334,22 @@ def joint_train(opt, train_loader, model, val_loader):
         tb_logger.log_value('step', iters, step=model.Eiters)
         tb_logger.log_value('batch_time', batch_time.val, step=model.Eiters)
         tb_logger.log_value('data_time', data_time.val, step=model.Eiters)
+
+        if loss is not None:
+            tb_logger.log_value('train', float(loss.detach().cpu().numpy()), step=model.Eiters)
+
+        if loss_c2c is not None:
+            tb_logger.log_value('c2c', float(loss_c2c.detach().cpu().numpy()), step=model.Eiters)
+
         model.logger.tb_log(tb_logger, step=model.Eiters)
 
         # validate at every val_step
         if model.Eiters % opt.val_step == 0:
             total_score = 0
             for l, vloader in zip(langs, val_loader):
-                score = validate(opt, vloader, model, l)
+                with torch.no_grad():
+                    score = validate(opt, vloader, model, l)
+
                 if opt.primary:
                     if l in primary:
                         total_score += score
@@ -342,8 +357,13 @@ def joint_train(opt, train_loader, model, val_loader):
                     total_score += score
             # Compute val loss on sentencepair task
             if opt.sentencepair:
-                val_loss = sentencepair_eval(model, sentencepair_loader_val)
-                print('Sentence Pair Val Loss {}'.format(val_loss))
+                # val_loss = sentencepair_eval(model, sentencepair_loader_val)
+                # tb_logger.log_value('valid_c2c', val_loss, step=model.Eiters)
+                # print('Sentence Pair Val Loss {}'.format(val_loss))
+                tb_logger.log_value('valid_c2c', 0., step=model.Eiters)
+            else:
+                tb_logger.log_value('valid_c2c', 0., step=model.Eiters)
+
             if total_score > best_score:
                 is_best = True
                 print("New best: {}".format(total_score))
@@ -356,7 +376,6 @@ def joint_train(opt, train_loader, model, val_loader):
                 if patience_count >= opt.patience:
                     print("No improvement in {} evaluations, stopping".format(patience_count))
                     break
-            print(batches_seen)
             save_checkpoint({
                 'iter': iters,
                 'model': model.state_dict(),
@@ -365,13 +384,14 @@ def joint_train(opt, train_loader, model, val_loader):
                 'Eiters': model.Eiters,
             }, is_best, prefix=opt.logger_name + '/')
 
-    print("Finished trained. Best score: {}".format(best_score)) 
+    print("Finished trained. Best score: {}".format(best_score))
 
-def validate(opt, val_loader, model, lang):
+
+def validate(opt, val_loader, model, lang, n=5):
     # compute the encoding for all the validation images and captions
-    img_embs, cap_embs = encode_data(
+    img_embs, cap_embs, val_loss = encode_data(
         model, val_loader, opt.log_step, logging.info)
-    if lang in ['en', 'de'] and not opt.undersample:
+    if lang in ['en', 'de']:
         n = 5
     else:
         n = 1
@@ -399,6 +419,7 @@ def validate(opt, val_loader, model, lang):
     tb_logger.log_value('medri', medri, step=model.Eiters)
     tb_logger.log_value('meanr', meanr, step=model.Eiters)
     tb_logger.log_value('rsum', currscore, step=model.Eiters)
+    tb_logger.log_value('valid', val_loss, step=model.Eiters)
 
     return currscore
 
@@ -415,22 +436,6 @@ def adjust_learning_rate(opt, optimizer, epoch):
     lr = opt.learning_rate * (0.1 ** (epoch // opt.lr_update))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
 
 
 if __name__ == '__main__':
