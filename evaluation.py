@@ -1,7 +1,7 @@
 from __future__ import print_function
 import os
 import pickle
-
+import itertools 
 from data import get_test_loader
 import time
 import numpy as np
@@ -237,7 +237,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
               mean_metrics[5:10])
 
     torch.save({'rt': rt, 'rti': rti}, 'ranks.pth.tar')
-
+    return img_embs, cap_embs
 
 def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
     """
@@ -276,9 +276,24 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
     data_loader = get_test_loader(split, opt.data_name, vocab, opt.crop_size,
                                   opt.batch_size, opt.workers, opt)
     if len(langs) > 1:
+        emb_dict = {}
         for data, loader_lang in zip(data_loader, langs):
             loader = data
-            run_eval(model, loader, fold5, opt, loader_lang)
+            img_emb, cap_emb = run_eval(model, loader, fold5, opt, loader_lang)
+            emb_dict[loader_lang] = cap_emb
+        for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
+            print(l1,l2)
+            if l1 in ['en', 'de']:
+                n_caps = 5
+            else:
+                n_caps = 1
+            ca, cb = emb_dict[l1], emb_dict[l2]
+            r, rt = i2t(ca, cb, measure=opt.measure, n=n_caps, return_ranks=True)
+            ar = (r[0] + r[1] + r[2]) / 3
+            rsum = r[0] + r[1] + r[2] 
+            r = (l1,l2,) +  r + (ar,) 
+            print("rsum: %.1f" % rsum)
+            print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
     else:
         run_eval(model, data_loader, fold5, opt, opt.lang)
 
