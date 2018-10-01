@@ -4,9 +4,9 @@ import pickle
 import itertools 
 from data import get_test_loader
 import time
-import numpy as np
 import numpy
-from vocab import Vocabulary  # NOQA
+import pandas
+from vocab import Vocabulary
 import torch
 from torch.autograd import Variable
 from model import VSE, order_sim
@@ -96,8 +96,8 @@ def encode_data(model, data_loader, log_step=10, logging=print):
 
         # initialize the numpy arrays given the size of the embeddings
         if img_embs is None:
-            img_embs = np.zeros((len(data_loader.dataset), img_emb.size(1)))
-            cap_embs = np.zeros((len(data_loader.dataset), cap_emb.size(1)))
+            img_embs = numpy.zeros((len(data_loader.dataset), img_emb.size(1)))
+            cap_embs = numpy.zeros((len(data_loader.dataset), cap_emb.size(1)))
 
         # preserve the embeddings by copying from gpu and converting to numpy
         img_embs[ids] = img_emb.data.cpu().numpy().copy()
@@ -144,10 +144,10 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
             captionsA = captionsA.cuda()
             captionsB = captionsB.cuda()
         # Create permute and inverse permute indices t so t on length
-        indsA = np.argsort(np.array(lenA))
-        indsB = np.argsort(np.array(lenB))
-        revA  = np.zeros(len(lenA), dtype='int')
-        revB  = np.zeros(len(lenA), dtype='int')
+        indsA = numpy.argsort(numpy.array(lenA))
+        indsB = numpy.argsort(numpy.array(lenB))
+        revA  = numpy.zeros(len(lenA), dtype='int')
+        revB  = numpy.zeros(len(lenA), dtype='int')
         for j in range(len(lenA)):
             revA[indsA[j]] = j
             revB[indsB[j]] = j
@@ -227,7 +227,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
 
         print("-----------------------------------")
         print("Mean metrics: ")
-        mean_metrics = tuple(np.array(results).mean(axis=0).flatten())
+        mean_metrics = tuple(numpy.array(results).mean(axis=0).flatten())
         print("rsum: %.1f" % (mean_metrics[10] * 6))
         print("Average i2t Recall: %.1f" % mean_metrics[11])
         print("Image to text: %.1f %.1f %.1f %.1f %.1f" %
@@ -239,7 +239,9 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
     torch.save({'rt': rt, 'rti': rti}, 'ranks.pth.tar')
     return img_embs, cap_embs
 
-def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
+
+def evalrank(model_path, data_path=None, split='dev', fold5=False, 
+             lang=None, caption_rank=False, dump_word_embeddings=False):
     """
     Evaluate a trained model on either dev or test. If `fold5=True`, 5 fold
     cross-validation is done (only for MSCOCO). Otherwise, the full data is
@@ -280,23 +282,32 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False, lang=None):
         for data, loader_lang in zip(data_loader, langs):
             loader = data
             img_emb, cap_emb = run_eval(model, loader, fold5, opt, loader_lang)
-            emb_dict[loader_lang] = cap_emb
-        for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
-            print(l1,l2)
-            if l1 in ['en', 'de']:
-                n_caps = 5
-            else:
-                n_caps = 1
-            ca, cb = emb_dict[l1], emb_dict[l2]
-            r, rt = i2t(ca, cb, measure=opt.measure, n=n_caps, return_ranks=True)
-            ar = (r[0] + r[1] + r[2]) / 3
-            rsum = r[0] + r[1] + r[2] 
-            r = (l1,l2,) +  r + (ar,) 
-            print("rsum: %.1f" % rsum)
-            print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
+            if caption_rank:
+                emb_dict[loader_lang] = cap_emb
+        if caption_rank:
+            for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
+                print(l1,l2)
+                if l1 in ['en', 'de']:
+                    n_caps = 5
+                else:
+                    n_caps = 1
+                ca, cb = emb_dict[l1], emb_dict[l2]
+                r, rt = i2t(ca, cb, measure=opt.measure, n=n_caps, return_ranks=True)
+                ar = (r[0] + r[1] + r[2]) / 3
+                rsum = r[0] + r[1] + r[2] 
+                r = (l1,l2,) +  r + (ar,) 
+                print("rsum: %.1f" % rsum)
+                print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
     else:
         run_eval(model, data_loader, fold5, opt, opt.lang)
-
+    
+    if dump_word_embeddings:
+        v_sorted = sorted(vocab.idx2word.items(), key=lambda x: x[0])
+        index_col = map(lambda x: x[1], v_sorted)    
+        data = model.txt_enc.embed.weight.detach().cpu().numpy()
+        frame = pandas.DataFrame(data=data, columns=None, index=index_col)
+        path = os.path.join(os.path.dirname(model_path), 'word_embeddings.vec')
+        frame.to_csv(path, sep=' ', header=False, encoding = 'utf-8')
 
 def i2t(images, captions, npts=None, n=5, measure='cosine', return_ranks=False):
     """
@@ -405,6 +416,12 @@ if __name__ == "__main__":
     parser.add_argument("--fold5", action="store_true")
     parser.add_argument("--split", default="val")
     parser.add_argument("--lang", type=str, default=None)
+    parser.add_argument("--caption_rank", action="store_true", 
+                       help="Run cross-lingual sentenceranking experiment")
+    #TODO actually implement this :D
+    parser.add_argument("--dump_word_embeddings", action="store_true", 
+                       help="Save word embeddings to model directory.") 
     args = parser.parse_args()
     evalrank(args.model_path, data_path=args.data_path, split=args.split,
-             fold5=args.fold5, lang=args.lang)
+             fold5=args.fold5, lang=args.lang, caption_rank=args.caption_rank,
+             dump_word_embeddings=args.dump_word_embeddings)
