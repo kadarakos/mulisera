@@ -111,7 +111,13 @@ and given a `--seed`.
 
 If you found this code useful, please cite the following paper:
 
-    {COMING SOON}
+@article{kadar2018lessons,  
+    title={Lessons learned in multilingual grounded language learning},  
+    author={K{\'a}d{\'a}r, {\'A}kos and Elliott, Desmond and C{\^o}t{\'e}, Marc-Alexandre and Chrupa{\l}a, Grzegorz and Alishahi, Afra},  
+    journal={arXiv preprint arXiv:1809.07615},  
+    year={2018}  
+}
+
 
 ## License
 
