@@ -53,6 +53,8 @@ def main():
                         help='Dimensionality of the word embedding.')
     parser.add_argument('--embed_size', default=1024, type=int,
                         help='Dimensionality of the joint embedding.')
+    parser.add_argument('--bidi', action='store_true',
+                        help='Run BiGRU instead of GRU.')
     parser.add_argument('--grad_clip', default=2., type=float,
                         help='Gradient clipping threshold.')
     parser.add_argument('--crop_size', default=224, type=int,

@@ -186,18 +186,20 @@ class EncoderImagePrecomp(nn.Module):
 class EncoderText(nn.Module):
 
     def __init__(self, vocab_size, word_dim, embed_size, num_layers,
-                 use_abs=False):
+            bidi=True, use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
+        self.hidden_size = self.embed_size if not bidi else self.embed_size * 2
+        self.bidi = bidi
         # word embedding
         self.embed = nn.Embedding(vocab_size, word_dim)
 
         # caption embedding
-        self.rnn = nn.GRU(word_dim, embed_size, num_layers, batch_first=True)
+        self.rnn = nn.GRU(word_dim, embed_size, num_layers, bidirectional=bidi,
+                          batch_first=True)
 
         self.init_weights()
-
 
     def init_weights(self, pretrained=False):
         self.embed.weight.data.uniform_(-0.1, 0.1)
@@ -215,9 +217,12 @@ class EncoderText(nn.Module):
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)
         I = torch.LongTensor(lengths).view(-1, 1, 1)
-        I = Variable(I.expand(x.size(0), 1, self.embed_size)-1).cuda()
+        I = Variable(I.expand(x.size(0), 1, self.hidden_size)-1).cuda()
         out = torch.gather(padded[0], 1, I).squeeze(1)
-
+        # Take over direction as in 
+        if self.bidi:
+            out = out.view(-1, 2, self.hidden_size/2)
+            out = torch.max(out, 1)[0]
         # normalization in the joint embedding space
         out = l2norm(out)
 
@@ -301,7 +306,7 @@ class VSE(object):
                                     use_abs=opt.use_abs,
                                     no_imgnorm=opt.no_imgnorm)
         self.txt_enc = EncoderText(opt.vocab_size, opt.word_dim,
-                                   opt.embed_size, opt.num_layers,
+                                   opt.embed_size, opt.num_layers, opt.bidi,
                                    use_abs=opt.use_abs)
         if torch.cuda.is_available():
             self.img_enc.cuda()
