@@ -255,7 +255,7 @@ class Multi30KDataset(data.Dataset):
 
     def __init__(self, data_path, data_split,
                  vocab, lang, undersample=False, log_path=None,
-                 half=False, disaligned=False):
+                 half=False, disaligned=False, lang_prefix=False):
         """
         Parameters
         ----------
@@ -288,6 +288,7 @@ class Multi30KDataset(data.Dataset):
         self.log_path = log_path
         self.half = half
         self.disaligned = disaligned
+        self.lang_prefix = lang_prefix
         #Captions
         self.captions = []
         l_stack = []
@@ -326,9 +327,16 @@ class Multi30KDataset(data.Dataset):
                     split = 'test_2016'
                 else:
                     split = data_split
-                f = open(data_path+'/data/task2/tok/'+'{}.lc.norm.tok.{}.{}'.format(split, i, l), 'rb').read().split("\n")
-                # Prepend Language id (EN, FR, DE, CS) to the captions.
-                caps.append(f[:-1])
+                text = '{}.lc.norm.tok.{}.{}'.format(split, i, l)
+                path = os.path.join('/data/task2/tok/', text)
+                # Add language prefix to each word in all captions like 'en_woman en_sits en_on en_the en_bench.'
+                if self.lang_prefix:
+                    prefix = lambda x: " ".join(map(lambda y: l+"_"+y, x.split()))
+                with open(data_path + path) as f:
+                    t = f.read().split('\n')
+                    if self.lang_prefix:
+                        t = map(prefix, t)
+                    caps.append(t[:-1])
 
             # Pick one caption per image.
             if self.undersample:
@@ -370,9 +378,12 @@ class Multi30KDataset(data.Dataset):
                     split = 'test_2016_flickr'
                 else:
                     split = self.data_split
+             
                 with open(data_path +'/data/task1/tok/' + '{}.lc.norm.tok.{}'.format(split, l), 'rb') as f:
                     for line in f:
                         c = line.strip()
+                        if self.lang_prefix:
+                            c = " ".join(map(lambda x: l+"_"+x, c.split()))
                         self.captions.append(c)
 
         self.images = np.concatenate(self.images, axis=0)
@@ -452,7 +463,7 @@ class M30KSentencePairDataset():
     """
 
     def __init__(self, data_path, data_split, batch_size,
-                 vocab, lang, undersample=False):
+                 vocab, lang, undersample=False, lang_prefix=False):
         """
         Parameters
         ----------
@@ -477,6 +488,7 @@ class M30KSentencePairDataset():
         self.vocab = vocab
         self.vocab = vocab
         self.undersample = undersample
+        self.lang_prefix = lang_prefix
         # Captions
         self.captions = []
         l_stack = []
@@ -494,9 +506,12 @@ class M30KSentencePairDataset():
                 l_stack.append(l[:-1])
                 continue
             print("Running {} from task 2".format(l))
+            if self.lang_prefix:
+                prefix = lambda x: " ".join(map(lambda y: l+"_"+y, x.split()))
             for j in range(1, 6):
                 f = open(data_path+'/data/task2/tok/'+'{}.lc.norm.tok.{}.{}'.format(self.data_split, j, l), 'rb').read().split("\n")
-                # Prepend Language id (EN, FR, DE, CS) to the captions.
+                if self.lang_prefix:
+                    f = map(prefix, f)
                 caps.append(f[:-1])
             # Store each languages captions in a separate list.
             # When undersample, pick one out of 5 possible
@@ -515,6 +530,8 @@ class M30KSentencePairDataset():
                 with open(data_path +'/data/task1/tok/' + '{}.lc.norm.tok.{}'.format(self.data_split, l), 'rb') as f:
                     for line in f:
                         c = line.strip()
+                        if self.lang_prefix:
+                            c = " ".join(map(lambda x: l+"_"+x, c.split()))
                         caps.append(c)
                 self.captions.append(caps)
         # Create a bigass list of all possible pairs
@@ -660,7 +677,7 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
     if opt.data_name == "m30k":
         lang = lang if lang else opt.lang
         dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
-                               lang=lang, undersample=opt.undersample, 
+                               lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
                                half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
@@ -756,12 +773,14 @@ def get_loaders(data_name, vocab, crop_size, batch_size, num_workers, opt):
                                                               opt.batch_size,
                                                               t_vocab,
                                                               opt.lang,
-                                                              undersample=opt.undersample)
+                                                              undersample=opt.undersample,
+                                                              lang_prefix=opt.lang_prefix)
                 sentencepair_loader_val = M30KSentencePairDataset(opt.data_path, 'val',
                                                               opt.batch_size,
                                                               t_vocab,
                                                               opt.lang,
-                                                              undersample=opt.undersample)
+                                                              undersample=opt.undersample,
+                                                              lang_prefix=opt.lang_prefix)
                 train_loader.append(sentencepair_loader)
                 val_loader.append(sentencepair_loader_val)
     else:

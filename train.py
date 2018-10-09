@@ -39,6 +39,8 @@ def main():
                         help='Use only half of the M30K from task 2.')
     parser.add_argument('--disaligned', action='store_true',
                         help='Use only half of the M30K from task 2.')
+    parser.add_argument('--lang_prefix', action='store_true',
+                        help='Put the language id infront of each word to split vocabularies.')
     parser.add_argument('--vocab_path', default='.',
                         help='Path to saved vocabulary pickle files.')
     parser.add_argument('--margin', default=0.2, type=float,
