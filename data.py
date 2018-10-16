@@ -18,6 +18,38 @@ import itertools
 nltk.download('punkt', quiet=True)
 
 
+def build_vocabulary(captions, log_path, threshold=4):
+    """
+    Build a simple vocabulary wrapper.
+    """
+    print("Building vocabulary")
+    counter = Counter()
+    for i, caption in enumerate(captions):
+        tokens = nltk.tokenize.word_tokenize(
+            caption.lower().decode('utf-8'))
+        counter.update(tokens)
+        if i % 1000 == 0:
+            print("[%d/%d] tokenized the captions." % (i, len(captions)))
+
+    # Discard if the occurrence of the word is less than min_word_cnt.
+    words = [word for word, cnt in counter.items() if cnt >= threshold]
+
+    # Create a vocab wrapper and add some special tokens.
+    vocab = Vocabulary()
+    vocab.add_word('<pad>')
+    vocab.add_word('<start>')
+    vocab.add_word('<end>')
+    vocab.add_word('<unk>')
+    # Add words to the vocabulary.
+    for i, word in enumerate(words):
+        vocab.add_word(word)
+    print('Num words:', vocab.idx)
+    pickle.dump(vocab,
+            open(os.path.join(log_path, 'vocab.pkl'), 'w'),
+                pickle.HIGHEST_PROTOCOL)
+    return vocab
+
+
 def get_paths(path, name='coco', use_restval=False):
     """
     Returns paths to images and annotations for the given datasets. For MSCOCO
@@ -224,7 +256,6 @@ class PrecompDataset(data.Dataset):
         # the development set for coco is large and so validation would be slow
         if data_split == 'dev':
             self.length = 5000
-        # Re-write dictionary to character level.
 
     def __getitem__(self, index):
         # handle the image redundancy
@@ -255,7 +286,7 @@ class Multi30KDataset(data.Dataset):
 
     def __init__(self, data_path, data_split,
                  vocab, lang, undersample=False, log_path=None,
-                 half=False, disaligned=False, lang_prefix=False):
+                 half=False, disaligned=False, lang_prefix=False, char_level=False):
         """
         Parameters
         ----------
@@ -289,6 +320,7 @@ class Multi30KDataset(data.Dataset):
         self.half = half
         self.disaligned = disaligned
         self.lang_prefix = lang_prefix
+        self.char_level = char_level
         #Captions
         self.captions = []
         l_stack = []
@@ -391,52 +423,31 @@ class Multi30KDataset(data.Dataset):
             self.vocab = vocab
         # Build potentiall multilingual vocab.
         else:
-            self.vocab = self.build_vocabulary()
+            self.vocab = build_vocabulary(self.captions, self.log_path)
         # Image features
         self.length = len(self.captions)
         print('LANG:', self.lang, 'SPLIT:', self.data_split, 'LENGTH:', self.length)
         # rkiros data has redundancy in images, we divide by 5, 10crop doesn't
         # TODO super inefficient For task 2 repeat the images 5 times for each caption
         # Re-write dictionary to character level.
-
-    def build_vocabulary(self, threshold=4):
-        """
-        Build a simple vocabulary wrapper.
-        """
-        print("Building vocabulary")
-        counter = Counter()
-        for i, caption in enumerate(self.captions):
-            tokens = nltk.tokenize.word_tokenize(
-                caption.lower().decode('utf-8'))
-            counter.update(tokens)
-            if i % 1000 == 0:
-                print("[%d/%d] tokenized the captions." % (i, len(self.captions)))
-
-        # Discard if the occurrence of the word is less than min_word_cnt.
-        words = [word for word, cnt in counter.items() if cnt >= threshold]
-
-        # Create a vocab wrapper and add some special tokens.
-        vocab = Vocabulary()
-        vocab.add_word('<pad>')
-        vocab.add_word('<start>')
-        vocab.add_word('<end>')
-        vocab.add_word('<unk>')
-        # Add words to the vocabulary.
-        for i, word in enumerate(words):
-            vocab.add_word(word)
-        print('Num words:', vocab.idx)
-        pickle.dump(vocab,
-                open(os.path.join(self.log_path, 'vocab.pkl'), 'w'),
-                    pickle.HIGHEST_PROTOCOL)
-        return vocab
+        if self.char_level:
+            chars = set(list("".join(self.vocab.idx2word.values())))
+            self.vocab = Vocabulary()
+            self.vocab.add_word('<pad>')
+            self.vocab.add_word('<start>')
+            self.vocab.add_word('<end>')
+            self.vocab.add_word('<unk>')
+            for c in chars:
+                self.vocab.add_word(c)
 
     def __getitem__(self, index):
         #TODO not replicate image vectotrs a billion times
         img_id = index
         image = torch.Tensor(self.images[img_id])
         tokens = self.captions[index]
+        if self.char_level:
+            tokens = list(" ".join(tokens))
         vocab = self.vocab
-
         # Convert caption (string) to word ids.
         caption = []
         # We're not using the language ID token
@@ -463,7 +474,7 @@ class M30KSentencePairDataset():
     """
 
     def __init__(self, data_path, data_split, batch_size,
-                 vocab, lang, undersample=False, lang_prefix=False):
+                 vocab, lang, undersample=False, lang_prefix=False, char_level=False):
         """
         Parameters
         ----------
@@ -489,6 +500,7 @@ class M30KSentencePairDataset():
         self.vocab = vocab
         self.undersample = undersample
         self.lang_prefix = lang_prefix
+        self.char_level = char_level
         # Captions
         self.captions = []
         l_stack = []
@@ -556,6 +568,8 @@ class M30KSentencePairDataset():
         '''Raw string caption to torch tensor of ints.'''
         tokens = nltk.tokenize.word_tokenize(
             str(cap).lower().decode('utf-8'))
+        if self.char_level:
+            tokens = list(" ".join(tokens))
         caption = []
         caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])
@@ -678,7 +692,8 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
         lang = lang if lang else opt.lang
         dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
                                lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
-                               half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned)
+                               half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
+                               char_level=opt.char_level)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
@@ -774,13 +789,15 @@ def get_loaders(data_name, vocab, crop_size, batch_size, num_workers, opt):
                                                               t_vocab,
                                                               opt.lang,
                                                               undersample=opt.undersample,
-                                                              lang_prefix=opt.lang_prefix)
+                                                              lang_prefix=opt.lang_prefix,
+                                                              char_level=opt.char_level)
                 sentencepair_loader_val = M30KSentencePairDataset(opt.data_path, 'val',
                                                               opt.batch_size,
                                                               t_vocab,
                                                               opt.lang,
                                                               undersample=opt.undersample,
-                                                              lang_prefix=opt.lang_prefix)
+                                                              lang_prefix=opt.lang_prefix,
+                                                              char_level=opt.char_level)
                 train_loader.append(sentencepair_loader)
                 val_loader.append(sentencepair_loader_val)
     else:

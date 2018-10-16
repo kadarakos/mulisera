@@ -155,7 +155,7 @@ class EncoderImagePrecomp(nn.Module):
     def forward(self, images):
         """Extract image feature vectors."""
         # assuming that the precomputed features are already l2-normalized
-
+        images = l2norm(images)
         features = self.fc(images)
 
         # normalize in the joint embedding space
@@ -186,7 +186,7 @@ class EncoderImagePrecomp(nn.Module):
 class EncoderText(nn.Module):
 
     def __init__(self, vocab_size, word_dim, embed_size, num_layers,
-            bidi=True, use_abs=False):
+            bidi=False, use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
@@ -231,6 +231,58 @@ class EncoderText(nn.Module):
             out = torch.abs(out)
 
         return out
+
+
+class EncoderTextChar(nn.Module):
+
+    def __init__(self, vocab_size, word_dim, char_dim, embed_size, num_layers,
+            bidi=False, use_abs=False):
+        super(EncoderText, self).__init__()
+        self.use_abs = use_abs
+        self.embed_size = embed_size
+        self.hidden_size = self.embed_size if not bidi else self.embed_size * 2
+        self.bidi = bidi
+        # char-level word embedding
+        self.char_rnn = nn.GRU(char_dim, word_dim, num_layers, bidirectional=False,
+                          batch_first=True)
+
+        # caption embedding
+        self.word_rnn = nn.GRU(word_dim, embed_size, num_layers, bidirectional=bidi,
+                          batch_first=True)
+
+        self.init_weights()
+
+    def init_weights(self, pretrained=False):
+        self.embed.weight.data.uniform_(-0.1, 0.1)
+
+    def forward(self, x, lengths):
+        """Handles variable size captions
+        """
+        # Embed word ids to vectors
+        x = self.embed(x)
+        packed = pack_padded_sequence(x, lengths, batch_first=True)
+
+        # Forward propagate RNN
+        out, _ = self.rnn(packed)
+
+        # Reshape *final* output to (batch_size, hidden_size)
+        padded = pad_packed_sequence(out, batch_first=True)
+        I = torch.LongTensor(lengths).view(-1, 1, 1)
+        I = Variable(I.expand(x.size(0), 1, self.hidden_size)-1).cuda()
+        out = torch.gather(padded[0], 1, I).squeeze(1)
+        # Take over direction as in 
+        if self.bidi:
+            out = out.view(-1, 2, self.hidden_size/2)
+            out = torch.max(out, 1)[0]
+        # normalization in the joint embedding space
+        out = l2norm(out)
+
+        # take absolute value, used by order embeddings
+        if self.use_abs:
+            out = torch.abs(out)
+
+        return out
+
 
 def cosine_sim(im, s):
     """Cosine similarity between all the image and sentence pairs

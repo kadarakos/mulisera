@@ -309,6 +309,9 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False,
         path = os.path.join(os.path.dirname(model_path), 'word_embeddings.vec')
         frame.to_csv(path, sep=' ', header=False, encoding = 'utf-8')
 
+
+
+
 def i2t(images, captions, npts=None, n=5, measure='cosine', return_ranks=False):
     """
     Images->Text (Image Annotation)

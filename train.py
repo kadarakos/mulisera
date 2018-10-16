@@ -27,6 +27,10 @@ def main():
                         help='{coco,f8k,f30k,10crop}_precomp|coco|f8k|f30k|m30k')
     parser.add_argument('--lang', default='en',
                         help='Which language(s) to use from m30k, en-de, trains on en+de.')
+    parser.add_argument('--char_level', action='store_true',
+                        help='Run character-level GRU.')
+    parser.add_argument('--hier_char_level', action='store_true',
+                        help='Run hierarchical character-level + word-level GRU.')
     parser.add_argument('--sentencepair', action='store_true',
                         help='Train caption-caption ranking as well.')
     parser.add_argument('--sentencepair_p', default=0.5, type=float,
@@ -113,11 +117,11 @@ def main():
         opt.logger_name = os.path.join(opt.data_name, name)
             
     opt.logger_name = os.path.join(opt.logger_path, opt.logger_name, str(opt.seed))
-    print(opt)
     random.seed(rseed+opt.seed)
     np.random.seed(rseed+opt.seed)
     torch.cuda.manual_seed(rseed+opt.seed)
     torch.cuda.manual_seed_all(rseed+opt.seed)
+    print(opt)
 
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
     tb_logger.configure(opt.logger_name, flush_secs=5)
