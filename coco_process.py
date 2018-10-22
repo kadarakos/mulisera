@@ -1,7 +1,10 @@
 import json
+import sys
+import os
 from collections import defaultdict
 
-def extract(split="val"):
+
+def extract(root, output_path, split="val"):
     '''
     Extract the raw captions from the COCOdataset.org JSON file.
 
@@ -17,8 +20,9 @@ def extract(split="val"):
     Assumes you are working with these JSON files:
     http://images.cocodataset.org/annotations/annotations_trainval2014.zip
     '''
-    print("Loading {}".format('annotations/captions_{}2014.json'.format(split)))
-    d = json.load(open('annotations/captions_{}2014.json'.format(split)))
+    path = os.path.join(root, 'annotations/captions_{}2014.json')
+    print("Loading {}".format(path.format(split)))
+    d = json.load(open(path.format(split)))
     
     ids2files = dict()
     
@@ -35,8 +39,8 @@ def extract(split="val"):
     Write the names of the files onto disk (filenames.txt),
     write the mapping of imageID:filename to disk (ids2file.txt)
     '''
-    handle0 = open('{}_filenames.txt'.format(split), 'w')
-    handle2 = open("{}_ids2files.txt".format(split), "w")
+    handle0 = open(os.path.join(output_path, '{}_filenames.txt'.format(split)), 'w')
+    handle2 = open(os.path.join(output_path, "{}_ids2files.txt".format(split)), "w")
     for i in sortedids:
         handle0.write("{}\n".format(ids2files[i]))
         handle2.write('{}:{}\n'.format(i, ids2files[i]))
@@ -49,7 +53,7 @@ def extract(split="val"):
     they can be written to disk in the same order as the names of the images
     (filenames.txt).
     '''
-    handle1 = open("{}_captions.txt".format(split), "w")
+    handle1 = open(os.path.join(output_path, "{}_captions.txt".format(split)), "w")
     captions = defaultdict(list)
     for i in d['annotations']:
         captions[i['image_id']].append(i['caption'])
@@ -72,5 +76,10 @@ def extract(split="val"):
     print("Ignored {} captions because there were more than 5 captions for a given image".format(ignored))
 
 if __name__ == "__main__":
-    extract("val")
-    extract("train")
+    coco_root = sys.argv[1]
+    output_path = sys.argv[2]
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
+
+    extract(coco_root, output_path, "val")
+    extract(coco_root, output_path, "train")
