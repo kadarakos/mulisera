@@ -18,15 +18,19 @@ import itertools
 nltk.download('punkt', quiet=True)
 
 
-def build_vocabulary(captions, log_path, threshold=4):
+def build_vocabulary(captions, log_path, threshold=4, ignore_tab=False):
     """
     Build a simple vocabulary wrapper.
     """
     print("Building vocabulary")
     counter = Counter()
     for i, caption in enumerate(captions):
-        tokens = nltk.tokenize.word_tokenize(
-            caption.lower().decode('utf-8'))
+        if ignore_tab:
+            tokens = nltk.tokenize.word_tokenize(
+                caption[0].split("\t")[0].lower().decode('utf-8'))
+        else:
+            tokens = nltk.tokenize.word_tokenize(
+                caption.lower().decode('utf-8'))
         counter.update(tokens)
         if i % 1000 == 0:
             print("[%d/%d] tokenized the captions." % (i, len(captions)))
@@ -463,6 +467,101 @@ class Multi30KDataset(data.Dataset):
         return self.length
 
 
+class COCONumpyDataset(data.Dataset):
+    """
+    Load precomputed captions and image features for the COCO data set.
+
+    """
+
+    def __init__(self, data_path, data_split,
+                 vocab, lang, undersample=False, log_path=None,
+                 half=False, disaligned=False, lang_prefix=False, char_level=False):
+        """
+        Parameters
+        ----------
+        data_path : str
+            Root of the multi30k data set.
+        data_split : str
+            'train', 'val' or 'test'           
+        vocab : Vocabulary object or None
+            When None create a vocabulary, otherwise use given.
+        lang : str
+            Languages to load from COCO delimited by '-' e.g.: en-jp.
+        undersample : bool
+            Use only one caption on the comparable portion.
+        log_path : str
+            Path where the model is checkpointed.
+        half : bool
+            Use only half of the images on the comparable English or German.
+        disaligned : bool
+            When using half and both English and Japanese, choose non-overlapping
+            images for the two languages.
+
+        TODO: Reimplement the lang, undersample, half, and disaligned features.
+        """
+        
+        self.lang = lang.split("-")
+        self.data_split = data_split
+        self.vocab = vocab
+        self.img_path = data_path + '/imgfeats/'
+        self.undersample = undersample
+        self.log_path = log_path
+        self.half = half
+        self.disaligned = disaligned
+        self.lang_prefix = lang_prefix
+        self.char_level = char_level
+        #Captions
+        self.captions = []
+        images_map_data = open(data_path + "ids2files.txt").readlines()
+        self.images_map = dict()
+
+        for idx, x in enumerate(images_map_data):
+            splitx = x.split(":")
+            self.images_map[splitx[0]] = idx
+
+        self.imgpath = os.path.join(self.img_path, data_split +'-resnet50-avgpool.npy')
+        self.image_vectors = np.load(self.imgpath).astype("float32")
+        self.images = []
+        caps = []
+        text = '{}_captions.txt'.format(data_split)
+        path = os.path.join(data_path, text)
+        with open(path) as f:
+            t = f.read().split('\n')
+            caps.append(t[:-1])
+            captions_candidate =  zip(*caps)
+            self.captions += captions_candidate
+            print(len(captions_candidate))
+
+        self.images = self.image_vectors
+        if vocab is not None:
+            self.vocab = vocab
+        # Build potentiall multilingual vocab.
+        else:
+            self.vocab = build_vocabulary(self.captions, self.log_path, ignore_tab=True)
+        # Image features
+        self.length = len(self.captions)
+        print('LANG:', self.lang, 'SPLIT:', self.data_split, 'LENGTH:', self.length)
+
+    def __getitem__(self, index):
+        tokens = self.captions[index][0]  # WHY does the data loader store tuples instead of strings?
+        img_id = self.images_map[tokens.split("\t")[1]]
+        image = torch.Tensor(self.images[img_id])
+        vocab = self.vocab
+        # Convert caption (string) to word ids.
+        caption = []
+        # We're not using the language ID token
+        tokenized = nltk.tokenize.word_tokenize(
+            str(tokens.split("\t")[0]).lower().decode('utf-8'))
+        caption.append(vocab('<start>'))
+        caption.extend([vocab(token) for token in tokenized])
+        caption.append(vocab('<end>'))
+        target = torch.Tensor(caption)
+        return image, target, index, img_id
+
+    def __len__(self):
+        return self.length
+
+
 class M30KSentencePairDataset():
     """
     Generates sentence pairs for the Multi30K dataset.
@@ -700,6 +799,18 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
                                                   pin_memory=True,
                                                   collate_fn=collate_fn)
         return data_loader, dset.vocab
+    elif opt.data_name == "coconumpy":
+        lang = lang if lang else opt.lang
+        dset = COCONumpyDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
+                               lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
+                               half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
+                               char_level=opt.char_level)
+        data_loader = torch.utils.data.DataLoader(dataset=dset,
+                                                  batch_size=batch_size,
+                                                  shuffle=shuffle,
+                                                  pin_memory=True,
+                                                  collate_fn=collate_fn)
+        return data_loader, dset.vocab
     else:
         dset = PrecompDataset(data_path, data_split, vocab)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
@@ -800,6 +911,27 @@ def get_loaders(data_name, vocab, crop_size, batch_size, num_workers, opt):
                                                               char_level=opt.char_level)
                 train_loader.append(sentencepair_loader)
                 val_loader.append(sentencepair_loader_val)
+    elif opt.data_name == "coconumpy":
+        langs = opt.lang.split("-")
+        # Run this to get vocabulary for all languages
+        # lang_vocab is the separate language ID vocabulary
+        # the None means we pass is no existing vocab object.
+        t_loader, t_vocab = get_precomp_loader(dpath, 'train',
+                                                        None, opt,
+                                                        batch_size,
+                                                        shuffle=True,
+                                                        num_workers=num_workers)
+
+        # Set the vocabulary size to be used by the model
+        opt.vocab_size = t_vocab.idx
+
+        print("Validation sets")
+        if len(langs) == 1:
+            # If only one language just use train vocab for the val-set and we are done.
+            val_loader, _ = get_precomp_loader(dpath, "val", t_vocab,
+                                                  opt, batch_size,
+                                                  shuffle=False, num_workers=num_workers)
+            train_loader = t_loader
     else:
         # Build Dataset Loader
         roots, ids = get_paths(dpath, data_name, opt.use_restval)

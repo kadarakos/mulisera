@@ -131,6 +131,9 @@ def main():
         vocab = None
         langs = opt.lang.split("-")
     # Load Vocabulary Wrapper for COCO or F30K
+    elif opt.data_name == "coconumpy":
+        vocab = None
+        langs = opt.lang.split("-")
     else:
         vocab = pickle.load(open(os.path.join(
             opt.vocab_path, '%s_vocab.pkl' % opt.data_name), 'rb'))
