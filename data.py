@@ -286,7 +286,8 @@ class Multi30KDataset(data.Dataset):
 
     def __init__(self, data_path, data_split,
                  vocab, lang, undersample=False, log_path=None,
-                 half=False, disaligned=False, lang_prefix=False, char_level=False):
+                 half=False, disaligned=False, lang_prefix=False, 
+                 char_level=False, hier_char_level=False):
         """
         Parameters
         ----------

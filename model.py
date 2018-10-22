@@ -19,6 +19,59 @@ def l2norm(X):
     return X
 
 
+def get_sort_unsort(lengths):
+    """
+    Given the lenghts of sequences give sorted indices and then the indices to sort it back.
+    """
+    _, sort = torch.sort(lengths, descending=True)
+    _, unsort = sort.sort()
+    return sort, unsort
+
+
+def pad_flat_batch(emb, nwords, batch_first=True):
+    """
+    Transform a 2D flat batch (batch of words in multiple sentences) into a 3D
+    padded batch where words have been allocated to their respective sentence
+    according to user passed sentence lengths `nwords`
+
+    Parameters
+    ===========
+    emb : torch.Tensor(total_words x emb_dim), flattened tensor of word embeddings
+    nwords : torch.Tensor(batch), number of words per sentence
+
+    Returns
+    =======
+    torch.Tensor(max_seq_len x batch x emb_dim) where:
+        - max_seq_len = max(nwords)
+        - batch = len(nwords)
+
+    >>> emb = [[0], [1], [2], [3], [4], [5]]
+    >>> nwords = [3, 1, 2]
+    >>> pad_flat_batch(torch.tensor(emb), torch.tensor(nwords)).tolist()
+    [[[0], [3], [4]], [[1], [0], [5]], [[2], [0], [0]]]
+    """
+    maxlen = torch.max(nwords)
+    
+    with torch.no_grad():
+        if len(emb) != sum(nwords):
+            raise ValueError("Got {} items but was asked to pad {}"
+                             .format(len(emb), sum(nwords)))
+
+        output, last = [], 0
+
+        for sentlen in nwords:
+            padding = (0, 0, 0, maxlen - sentlen)
+            output.append(torch.nn.functional.pad(emb[last:last+sentlen], padding))
+            last = last + sentlen
+
+        # (seq_len x batch x emb_dim)
+        output = torch.stack(output, dim=1)
+        if batch_first:
+            output = output.permute(1, 0, 2)
+
+    return output
+
+
 def EncoderImage(data_name, img_dim, embed_size, finetune=False,
                  cnn_type='vgg19', use_abs=False, no_imgnorm=False):
     """A wrapper to image encoders. Chooses between an encoder that uses
@@ -247,7 +300,7 @@ class EncoderTextChar(nn.Module):
                           batch_first=True)
 
         # caption embedding
-        self.word_rnn = nn.GRU(word_dim, embed_size, num_layers, bidirectional=bidi,
+        self.word_rnn = nn.GRU(word_dim, embed_size, num_layers, bidirectional=False,
                           batch_first=True)
 
         self.init_weights()
@@ -257,13 +310,21 @@ class EncoderTextChar(nn.Module):
 
     def forward(self, x, lengths):
         """Handles variable size captions
+        x: sequences of chars of words, according to the ordered sentence lengths.
         """
-        # Embed word ids to vectors
-        x = self.embed(x)
-        packed = pack_padded_sequence(x, lengths, batch_first=True)
-
-        # Forward propagate RNN
+        word_lengths, sentence_lenghts = lengths
+        # Embed char ids to vectors
+        char_emb = self.embed(x)
+        # pack it for the rnn
+        char_packed = pack_padded_sequence(x, lengths, batch_first=True)
+        # Run char rnn through the words
         out, _ = self.rnn(packed)
+        # Reshape *final* output to (batch_size, hidden_size)
+        padded = pad_packed_sequence(out, batch_first=True)
+        I = torch.LongTensor(lengths).view(-1, 1, 1)
+        I = Variable(I.expand(x.size(0), 1, self.hidden_size)-1).cuda()
+        out = torch.gather(padded[0], 1, I).squeeze(1)
+        # Forward propagate RNN
 
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)
