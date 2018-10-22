@@ -449,14 +449,15 @@ class Multi30KDataset(data.Dataset):
         img_id = index
         image = torch.Tensor(self.images[img_id])
         tokens = self.captions[index]
-        if self.char_level:
-            tokens = list(" ".join(tokens))
         vocab = self.vocab
-        # Convert caption (string) to word ids.
         caption = []
-        # We're not using the language ID token
-        tokenized = nltk.tokenize.word_tokenize(
-            str(tokens).lower().decode('utf-8'))
+        if self.char_level:
+            tokenized = list(tokens)  # split into characters
+        else:
+            # Convert caption (string) to word ids.
+            # We're not using the language ID token
+            tokenized = nltk.tokenize.word_tokenize(
+                str(tokens).lower().decode('utf-8'))
         caption.append(vocab('<start>'))
         caption.extend([vocab(token) for token in tokenized])
         caption.append(vocab('<end>'))
@@ -543,15 +544,26 @@ class COCONumpyDataset(data.Dataset):
         print('LANG:', self.lang, 'SPLIT:', self.data_split, 'LENGTH:', self.length)
 
     def __getitem__(self, index):
-        tokens = self.captions[index][0]  # WHY does the data loader store tuples instead of strings?
-        img_id = self.images_map[tokens.split("\t")[1]]
+        '''
+        This is complex because we need to map the COCO captions to images.
+        The COCO images are stored with strange identifiers based on the file
+        names, so we keep the caption and the image ID in the text file.
+        We split these out here so we don't accidentally encode the image ID.
+        '''
+        cap = self.captions[index][0]  # WHY does the data loader store tuples instead of strings?
+        tokens = cap.split("\t")[0]
+        img_id = self.images_map[cap.split("\t")[1]]
         image = torch.Tensor(self.images[img_id])
         vocab = self.vocab
         # Convert caption (string) to word ids.
         caption = []
-        # We're not using the language ID token
-        tokenized = nltk.tokenize.word_tokenize(
-            str(tokens.split("\t")[0]).lower().decode('utf-8'))
+        if self.char_level:
+            tokenized = list(tokens)  # split into characters
+        else:
+            # Convert caption (string) to word ids.
+            # We're not using the language ID token
+            tokenized = nltk.tokenize.word_tokenize(
+                str(tokens).lower().decode('utf-8'))
         caption.append(vocab('<start>'))
         caption.extend([vocab(token) for token in tokenized])
         caption.append(vocab('<end>'))
@@ -665,13 +677,16 @@ class M30KSentencePairDataset():
 
     def tokenize(self, cap):
         '''Raw string caption to torch tensor of ints.'''
-        tokens = nltk.tokenize.word_tokenize(
-            str(cap).lower().decode('utf-8'))
-        if self.char_level:
-            tokens = list(" ".join(tokens))
         caption = []
+        if self.char_level:
+            tokenized = list(cap)  # split into characters
+        else:
+            # Convert caption (string) to word ids.
+            # We're not using the language ID token
+            tokenized = nltk.tokenize.word_tokenize(
+                str(cap).lower().decode('utf-8'))
         caption.append(self.vocab('<start>'))
-        caption.extend([self.vocab(token) for token in tokens])
+        caption.extend([self.vocab(token) for token in tokenized])
         caption.append(self.vocab('<end>'))
         caption = torch.Tensor(caption)
         return caption
