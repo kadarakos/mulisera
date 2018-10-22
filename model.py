@@ -78,7 +78,7 @@ def EncoderImage(data_name, img_dim, embed_size, finetune=False,
     precomputed image features, `EncoderImagePrecomp`, or an encoder that
     computes image features on the fly `EncoderImageFull`.
     """
-    if data_name.endswith('_precomp') or data_name == "m30k":
+    if data_name.endswith('_precomp') or data_name == "m30k" or data_name == "coconumpy":
         img_enc = EncoderImagePrecomp(
             img_dim, embed_size, use_abs, no_imgnorm)
     else:
