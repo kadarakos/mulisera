@@ -13,6 +13,9 @@ def extract(split="val"):
       filenames.txt: the names of the .JPG image files
       ids2files.txt: maps the JSON image_id to the filename
       captions.txt: the raw captions, stored in ascending image_id order
+
+    Assumes you are working with these JSON files:
+    http://images.cocodataset.org/annotations/annotations_trainval2014.zip
     '''
     print("Loading {}".format('annotations/captions_{}2014.json'.format(split)))
     d = json.load(open('annotations/captions_{}2014.json'.format(split)))
