@@ -94,12 +94,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     coco_root = args.coco_root
     output_path = args.output_path
+    img_path = os.path.join(output_path, 'imgfeats')
     if not os.path.exists(output_path):
         os.mkdir(output_path)
+    if not os.path.exists(img_path):
+        os.mkdir(img_path)
+
     # Create text files to handle caption-image correspondances
     extract(coco_root, output_path, "val")
     extract(coco_root, output_path, "train")
     # Extract image features
-    extract_img_feats(coco_root, "val", args.batch_size, output_path)
-    extract_img_feats(coco_root, "train", args.batch_size, output_path)
+    extract_img_feats(coco_root, "val", args.batch_size, img_path)
+    extract_img_feats(coco_root, "train", args.batch_size, img_path)
 

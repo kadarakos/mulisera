@@ -48,9 +48,12 @@ def build_vocabulary(captions, log_path, threshold=4, ignore_tab=False):
     for i, word in enumerate(words):
         vocab.add_word(word)
     print('Num words:', vocab.idx)
-    pickle.dump(vocab,
-            open(os.path.join(log_path, 'vocab.pkl'), 'w'),
-                pickle.HIGHEST_PROTOCOL)
+    print(vocab)
+    path = os.path.join(log_path, 'vocab.pkl')
+    print(path)
+    with open(path, 'w') as f:
+        pickle.dump(vocab, f,
+                    pickle.HIGHEST_PROTOCOL)
     return vocab
 
 
@@ -505,7 +508,7 @@ class COCONumpyDataset(data.Dataset):
         self.lang = lang.split("-")
         self.data_split = data_split
         self.vocab = vocab
-        self.img_path = data_path + '/imgfeats/'
+        self.img_path = os.path.join(data_path, 'imgfeats')
         self.undersample = undersample
         self.log_path = log_path
         self.half = half
@@ -514,7 +517,7 @@ class COCONumpyDataset(data.Dataset):
         self.char_level = char_level
         #Captions
         self.captions = []
-        images_map_data = open(data_path + "ids2files.txt").readlines()
+        images_map_data = open(data_path + "{}_ids2files.txt".format(self.data_split)).readlines()
         self.images_map = dict()
 
         for idx, x in enumerate(images_map_data):

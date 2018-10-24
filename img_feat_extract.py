@@ -106,6 +106,7 @@ def resnet_forward(cnn, x):
     return res4f_relu, avgp
 
 def extract_img_feats(root, split, batch_size, output_path):
+    split_name = split
     split = split + '2014'
     dataset = ImageFolderDataset(root, split, resize=256, crop=224)
     print('Root folder: {} (split: {}) ({} images)'.format(
@@ -141,7 +142,7 @@ def extract_img_feats(root, split, batch_size, output_path):
         print('{:3}/{:3} batches completed.'.format(
             bidx + 1, n_batches), end='\r')
     # Save the files
-    output = os.path.join(output_path, '{}-avgpool-resnet50'.format(split))
+    output = os.path.join(output_path, '{}-resnet50-avgpool'.format(split_name))
     print("Saving output to {}.npy".format(output))
     np.save(output, pool_feats.astype('float16'))
     # np.save(output + '-res4frelu', conv_feats.astype('float16'))
