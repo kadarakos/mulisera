@@ -230,7 +230,6 @@ class EncoderImagePrecomp(nn.Module):
         for name, param in state_dict.items():
             if name in own_state:
                 new_state[name] = param
-
         super(EncoderImagePrecomp, self).load_state_dict(new_state)
 
 
@@ -239,7 +238,7 @@ class EncoderImagePrecomp(nn.Module):
 class EncoderText(nn.Module):
 
     def __init__(self, vocab_size, word_dim, embed_size, num_layers,
-            bidi=False, use_abs=False):
+                 bidi=False, use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
@@ -247,11 +246,10 @@ class EncoderText(nn.Module):
         self.bidi = bidi
         # word embedding
         self.embed = nn.Embedding(vocab_size, word_dim)
-
         # caption embedding
         self.rnn = nn.GRU(word_dim, embed_size, num_layers, bidirectional=bidi,
                           batch_first=True)
-
+        # Initialize weights
         self.init_weights()
 
     def init_weights(self, pretrained=False):
@@ -266,20 +264,18 @@ class EncoderText(nn.Module):
 
         # Forward propagate RNN
         out, _ = self.rnn(packed)
-
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)
-        I = torch.LongTensor(lengths).view(-1, 1, 1)
-        I = Variable(I.expand(x.size(0), 1, self.hidden_size)-1).cuda()
-        out = torch.gather(padded[0], 1, I).squeeze(1)
-        # Take over direction as in 
+        # Take max over time.
+        out = torch.max(padded[0], 1)[0]
+        # Take max over direction if bidi
         if self.bidi:
             out = out.view(-1, 2, self.hidden_size/2)
             out = torch.max(out, 1)[0]
         # normalization in the joint embedding space
         out = l2norm(out)
 
-        # take absolute value, used by order embeddings
+	    # take absolute value, used by order embeddings
         if self.use_abs:
             out = torch.abs(out)
 
