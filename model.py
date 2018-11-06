@@ -238,12 +238,13 @@ class EncoderImagePrecomp(nn.Module):
 class EncoderText(nn.Module):
 
     def __init__(self, vocab_size, word_dim, embed_size, num_layers,
-                 bidi=False, use_abs=False):
+                 bidi=False, maxtime=False, use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
         self.hidden_size = self.embed_size if not bidi else self.embed_size * 2
         self.bidi = bidi
+        self.maxtime = maxtime
         # word embedding
         self.embed = nn.Embedding(vocab_size, word_dim)
         # caption embedding
@@ -267,7 +268,12 @@ class EncoderText(nn.Module):
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)
         # Take max over time.
-        out = torch.max(padded[0], 1)[0]
+        if self.maxtime:
+            out = torch.max(padded[0], 1)[0]
+        else:
+            I = torch.LongTensor(lengths).view(-1, 1, 1)
+            I = Variable(I.expand(x.size(0), 1, self.embed_size)-1).cuda()
+            out = torch.gather(padded[0], 1, I).squeeze(1)
         # Take max over direction if bidi
         if self.bidi:
             out = out.view(-1, 2, self.hidden_size/2)
