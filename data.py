@@ -48,9 +48,12 @@ def build_vocabulary(captions, log_path, threshold=4, ignore_tab=False):
     for i, word in enumerate(words):
         vocab.add_word(word)
     print('Num words:', vocab.idx)
-    pickle.dump(vocab,
-            open(os.path.join(log_path, 'vocab.pkl'), 'w'),
-                pickle.HIGHEST_PROTOCOL)
+    print(vocab)
+    path = os.path.join(log_path, 'vocab.pkl')
+    print(path)
+    with open(path, 'w') as f:
+        pickle.dump(vocab, f,
+                    pickle.HIGHEST_PROTOCOL)
     return vocab
 
 
@@ -290,7 +293,8 @@ class Multi30KDataset(data.Dataset):
 
     def __init__(self, data_path, data_split,
                  vocab, lang, undersample=False, log_path=None,
-                 half=False, disaligned=False, lang_prefix=False, char_level=False):
+                 half=False, disaligned=False, lang_prefix=False, 
+                 char_level=False, hier_char_level=False):
         """
         Parameters
         ----------
@@ -504,7 +508,7 @@ class COCONumpyDataset(data.Dataset):
         self.lang = lang.split("-")
         self.data_split = data_split
         self.vocab = vocab
-        self.img_path = data_path + '/imgfeats/'
+        self.img_path = os.path.join(data_path, 'imgfeats')
         self.undersample = undersample
         self.log_path = log_path
         self.half = half
@@ -513,7 +517,7 @@ class COCONumpyDataset(data.Dataset):
         self.char_level = char_level
         #Captions
         self.captions = []
-        images_map_data = open(data_path + "ids2files.txt").readlines()
+        images_map_data = open(data_path + "{}_ids2files.txt".format(self.data_split)).readlines()
         self.images_map = dict()
 
         for idx, x in enumerate(images_map_data):
@@ -541,6 +545,9 @@ class COCONumpyDataset(data.Dataset):
             self.vocab = build_vocabulary(self.captions, self.log_path, ignore_tab=True)
         # Image features
         self.length = len(self.captions)
+        # the development set for coco is large and so validation would be slow
+        if data_split == 'dev':
+            self.length = 5000
         print('LANG:', self.lang, 'SPLIT:', self.data_split, 'LENGTH:', self.length)
 
     def __getitem__(self, index):
@@ -807,7 +814,7 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
         dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
                                lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
                                half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
-                               char_level=opt.char_level)
+                               char_level="char_level" in opt and opt.char_level)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
@@ -819,7 +826,7 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
         dset = COCONumpyDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
                                lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
                                half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
-                               char_level=opt.char_level)
+                               char_level="char_level" in opt and opt.char_level)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
