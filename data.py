@@ -545,6 +545,9 @@ class COCONumpyDataset(data.Dataset):
             self.vocab = build_vocabulary(self.captions, self.log_path, ignore_tab=True)
         # Image features
         self.length = len(self.captions)
+        # the development set for coco is large and so validation would be slow
+        if data_split == 'dev':
+            self.length = 5000
         print('LANG:', self.lang, 'SPLIT:', self.data_split, 'LENGTH:', self.length)
 
     def __getitem__(self, index):
@@ -811,7 +814,7 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
         dset = Multi30KDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
                                lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
                                half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
-                               char_level=opt.char_level)
+                               char_level="char_level" in opt and opt.char_level)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
@@ -823,7 +826,7 @@ def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
         dset = COCONumpyDataset(opt.data_path, data_split, vocab, log_path=opt.logger_name, 
                                lang=lang, undersample=opt.undersample, lang_prefix=opt.lang_prefix,
                                half="half" in opt and opt.half, disaligned="disaligned" in opt and opt.disaligned,
-                               char_level=opt.char_level)
+                               char_level="char_level" in opt and opt.char_level)
         data_loader = torch.utils.data.DataLoader(dataset=dset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
