@@ -241,7 +241,8 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
 
 
 def evalrank(model_path, data_path=None, split='dev', fold5=False, 
-             lang=None, caption_rank=False, dump_word_embeddings=False):
+             lang=None, caption_rank=False, dump_word_embeddings=False,
+	     dump_image_embeddings=False, dump_caption_embeddings=False):
     """
     Evaluate a trained model on either dev or test. If `fold5=True`, 5 fold
     cross-validation is done (only for MSCOCO). Otherwise, the full data is
@@ -284,6 +285,12 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False,
             img_emb, cap_emb = run_eval(model, loader, fold5, opt, loader_lang)
             if caption_rank:
                 emb_dict[loader_lang] = cap_emb
+	    if dump_image_embeddings:
+		path = os.path.join(os.path.dirname(model_path), 'image_embeddings.vec')
+		numpy.save(path, img_emb)	
+	    if dump_caption_embeddings:
+		path = os.path.join(os.path.dirname(model_path), 'caption_embeddings.vec')
+		numpy.save(path, cap_emb)	
         if caption_rank:
             for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
                 print(l1,l2)
@@ -421,10 +428,15 @@ if __name__ == "__main__":
     parser.add_argument("--lang", type=str, default=None)
     parser.add_argument("--caption_rank", action="store_true", 
                        help="Run cross-lingual sentenceranking experiment")
-    #TODO actually implement this :D
     parser.add_argument("--dump_word_embeddings", action="store_true", 
+                       help="Save word embeddings to model directory.") 
+    parser.add_argument("--dump_image_embeddings", action="store_true", 
+                       help="Save word embeddings to model directory.") 
+    parser.add_argument("--dump_caption_embeddings", action="store_true", 
                        help="Save word embeddings to model directory.") 
     args = parser.parse_args()
     evalrank(args.model_path, data_path=args.data_path, split=args.split,
              fold5=args.fold5, lang=args.lang, caption_rank=args.caption_rank,
-             dump_word_embeddings=args.dump_word_embeddings)
+             dump_word_embeddings=args.dump_word_embeddings,
+	     dump_image_embeddings=args.dump_image_embeddings,
+	     dump_caption_embeddings=args.dump_caption_embeddings)
