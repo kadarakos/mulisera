@@ -64,7 +64,7 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
         if lang_prefix:
             pass
         caps.append(t[:-1])
-    captions = np.array([y for x in caps for y in x])
+    captions = np.array([y.split('\t')[0] for x in caps for y in x])
     if downsample:
         #Get indices for a random subsample for the image vectors
         a = np.arange(image_vectors.shape[0] - 1)
