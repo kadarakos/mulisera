@@ -456,7 +456,7 @@ class Multi30KDataset(data.Dataset):
         vocab = self.vocab
         caption = []
         if self.char_level:
-            tokenized = list(tokens)  # split into characters
+            tokenized = list(tokens.lower())  # split into characters
         else:
             # Convert caption (string) to word ids.
             # We're not using the language ID token
@@ -565,7 +565,7 @@ class COCONumpyDataset(data.Dataset):
         # Convert caption (string) to word ids.
         caption = []
         if self.char_level:
-            tokenized = list(tokens)  # split into characters
+            tokenized = list(tokens.lower())  # split into characters
         else:
             # Convert caption (string) to word ids.
             # We're not using the language ID token
@@ -686,7 +686,7 @@ class M30KSentencePairDataset():
         '''Raw string caption to torch tensor of ints.'''
         caption = []
         if self.char_level:
-            tokenized = list(cap)  # split into characters
+            tokenized = list(cap.lower())  # split into characters
         else:
             # Convert caption (string) to word ids.
             # We're not using the language ID token
