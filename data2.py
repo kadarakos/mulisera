@@ -1,10 +1,16 @@
 import os 
 import re
+import pickle
+from collections import Counter
 import numpy as np  
 import nltk
 from torch.utils.data import DataLoader, Dataset
+from vocab import Vocabulary
 
-def build_vocabulary(captions, path, threshold=4):
+COCO_PATH = '/roaming/u1257964/coco_mulisera'
+M30K_PATH = '/roaming/u1257964/multi30k-dataset/'
+
+def build_vocabulary(captions, path='.', threshold=4):
     """
     Build a simple vocabulary wrapper.
     """
@@ -12,8 +18,6 @@ def build_vocabulary(captions, path, threshold=4):
     counter = Counter()
     for i, caption in enumerate(captions):
         counter.update(caption)
-        if i % 1000 == 0:
-            print("[%d/%d] tokenized the captions." % (i, len(captions)))
 
     # Discard if the occurrence of the word is less than min_word_cnt.
     words = [word for word, cnt in counter.items() if cnt >= threshold]
@@ -28,9 +32,7 @@ def build_vocabulary(captions, path, threshold=4):
     for i, word in enumerate(words):
         vocab.add_word(word)
     print('Num words:', vocab.idx)
-    print(vocab)
     path = os.path.join(path, 'vocab.pkl')
-    print(path)
     with open(path, 'w') as f:
         pickle.dump(vocab, f,
                     pickle.HIGHEST_PROTOCOL)
@@ -74,9 +76,9 @@ def tokenize(s):
     s : str
         String to tokenize.
     """
-    s = re.sub(r'\W+', '')
+    s = re.sub(r'([^\s\w]|_)+', '', s)
     tokens = nltk.tokenize.word_tokenize(s.lower().decode('utf-8'))
-
+    return tokens
 
 def read_m30K(data_path, lang, split, lang_prefix=False):
     """
@@ -97,7 +99,6 @@ def read_m30K(data_path, lang, split, lang_prefix=False):
     images = []
     caps = []
     img_ids = []
-    print("Running {} from task 2".format(lang))
     for i in range(1, 6):
         text = '{}.lc.norm.tok.{}.{}'.format(split, i, lang)
         path = os.path.join('/data/task2/tok/', text)
@@ -157,19 +158,41 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
     return images, captions
 
 
+def load_data(name, split, lang_prefix, downsample=False):
+    print("Loading {}, split {}".format(name, split))
+    if name == 'coconumpy':
+        # Downsample coco valset because its huge
+        if split == 'val':
+            downsample = 5000
+        path = COCO_PATH
+        img, cap = read_coco(path, split, lang_prefix, downsample)
+    elif name == 'm30ken':
+        path = M30K_PATH
+        img, cap = read_m30K(path, 'en', split, lang_prefix)
+    elif name == 'm30kde':
+        path = M30K_PATH
+        img, cap = read_m30K(path, 'de', split, lang_prefix)
+    else:
+        raise NotImplementedError
+    print("N images {}, N captions {}".format(len(img), len(cap)))
+    return img, cap
+        
+        
+
 class ImageCaptionDataset(Dataset):
     """
     Load precomputed captions and image features
     """
 
-    def __init__(self, captions, images):
+    def __init__(self, captions, images, vocab=None):
         # Captions
         self.captions = captions
         self.images = images
         self.length = len(self.captions)
         print("Tokenizing")
         self.tokenized_captions = [tokenize(x) for x in captions]
-        self.vocab = build_vocabulary(self.tokenized_captions)
+        if not vocab:
+            self.vocab = build_vocabulary(self.tokenized_captions)
 
     def __getitem__(self, index):
         image = torch.Tensor(self.images[index])
@@ -189,23 +212,32 @@ class DatasetCollection():
     def __init__(self):
         self.data_loaders = {}
         self.data_sets = {}
-    
-    def add_dataset(self, name, dset, batch_size, shuffle):
+        self.val_loaders = {}
+
+    def add_trainset(self, name, dset, batch_size):
         data_loader = DataLoader(dataset=dset,
                                  batch_size=batch_size,
-                                 shuffle=shuffle,
+                                 shuffle=True,
                                  pin_memory=True,
                                  collate_fn=collate_fn)
         self.data_sets[name] = dset
         self.data_loaders[name] = iter(data_loader)
+    
+    def add_valset(self, name, dset, batch_size):
+        data_loader = DataLoader(dataset=dset,
+                                 batch_size=batch_size,
+                                 shuffle=False,
+                                 pin_memory=True,
+                                 collate_fn=collate_fn)
+        self.val_loaders[name] = data_loader
     
     def compute_joint_vocab(self):
         """Join the captions of all data sets and recompute the vocabulary."""
         caps = [v.tokenized_captions for k, v in self.data_sets.items()]
         caps = [y for x in caps for y in x]
         vocab = build_vocabulary(caps)
-        for i in data_sets:
-            data_sets[i].vocab = vocab
+        for i in self.data_sets:
+            self.data_sets[i].vocab = vocab
 
     def __iter__(self):
         return self
@@ -223,3 +255,14 @@ class DatasetCollection():
         return image, target, index, index 
 
 
+def get_loaders(data_sets, lang_prefix, downsample, batch_size):
+    data_loaders = DatasetCollection()
+    for name in data_sets:
+        train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
+        val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
+        trainset = ImageCaptionDataset(train_cap, train_img)
+        valset = ImageCaptionDataset(val_cap, val_img, vocab=trainset.vocab)
+        data_loaders.add_trainset(name, trainset, batch_size)
+        data_loaders.add_valset(name, valset, batch_size)
+    data_loaders.compute_joint_vocab()
+    return data_loaders 
