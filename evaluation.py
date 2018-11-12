@@ -88,6 +88,7 @@ def encode_data(model, data_loader, log_step=10, logging=print):
     cap_embs = None
     for i, (images, captions, lengths, ids) in enumerate(data_loader):
         # make sure val logger is used
+        
         model.logger = val_logger
 
         # compute the embeddings
