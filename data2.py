@@ -111,7 +111,8 @@ def read_m30K(data_path, lang, split, lang_prefix=False):
             if lang_prefix:
                 pass
             caps.append(t[:-1])
-    captions = [y for x in caps for y in x]
+    caps = zip(*caps)
+    captions = [val for tup in caps for val in tup]
     images = np.repeat(image_vectors, 5, axis=0)
     return images, captions   
 
