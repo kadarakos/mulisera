@@ -71,120 +71,6 @@ def pad_flat_batch(emb, nwords, batch_first=True):
 
     return output
 
-
-def EncoderImage(data_name, img_dim, embed_size, finetune=False,
-                 cnn_type='vgg19', use_abs=False, no_imgnorm=False):
-    """A wrapper to image encoders. Chooses between an encoder that uses
-    precomputed image features, `EncoderImagePrecomp`, or an encoder that
-    computes image features on the fly `EncoderImageFull`.
-    """
-    if data_name.endswith('_precomp') or data_name == "m30k" or data_name == "coconumpy":
-        img_enc = EncoderImagePrecomp(
-            img_dim, embed_size, use_abs, no_imgnorm)
-    else:
-        img_enc = EncoderImageFull(
-            embed_size, finetune, cnn_type, use_abs, no_imgnorm)
-
-    return img_enc
-
-
-# tutorials/09 - Image Captioning
-class EncoderImageFull(nn.Module):
-
-    def __init__(self, embed_size, finetune=False, cnn_type='vgg19',
-                 use_abs=False, no_imgnorm=False):
-        """Load pretrained VGG19 and replace top fc layer."""
-        super(EncoderImageFull, self).__init__()
-        self.embed_size = embed_size
-        self.no_imgnorm = no_imgnorm
-        self.use_abs = use_abs
-
-        # Load a pre-trained model
-        self.cnn = self.get_cnn(cnn_type, True)
-
-        # For efficient memory usage.
-        for param in self.cnn.parameters():
-            param.requires_grad = finetune
-
-        # Replace the last fully connected layer of CNN with a new one
-        if cnn_type.startswith('vgg'):
-            self.fc = nn.Linear(self.cnn.classifier._modules['6'].in_features,
-                                embed_size)
-            self.cnn.classifier = nn.Sequential(
-                *list(self.cnn.classifier.children())[:-1])
-        elif cnn_type.startswith('resnet'):
-            self.fc = nn.Linear(self.cnn.module.fc.in_features, embed_size)
-            self.cnn.module.fc = nn.Sequential()
-
-        self.init_weights()
-
-    def get_cnn(self, arch, pretrained):
-        """Load a pretrained CNN and parallelize over GPUs
-        """
-        if pretrained:
-            print("=> using pre-trained model '{}'".format(arch))
-            model = models.__dict__[arch](pretrained=True)
-        else:
-            print("=> creating model '{}'".format(arch))
-            model = models.__dict__[arch]()
-
-        if arch.startswith('alexnet') or arch.startswith('vgg'):
-            model.features = nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = nn.DataParallel(model).cuda()
-
-        return model
-
-    def load_state_dict(self, state_dict):
-        """
-        Handle the models saved before commit pytorch/vision@989d52a
-        """
-        if 'cnn.classifier.1.weight' in state_dict:
-            state_dict['cnn.classifier.0.weight'] = state_dict[
-                'cnn.classifier.1.weight']
-            del state_dict['cnn.classifier.1.weight']
-            state_dict['cnn.classifier.0.bias'] = state_dict[
-                'cnn.classifier.1.bias']
-            del state_dict['cnn.classifier.1.bias']
-            state_dict['cnn.classifier.3.weight'] = state_dict[
-                'cnn.classifier.4.weight']
-            del state_dict['cnn.classifier.4.weight']
-            state_dict['cnn.classifier.3.bias'] = state_dict[
-                'cnn.classifier.4.bias']
-            del state_dict['cnn.classifier.4.bias']
-
-        super(EncoderImageFull, self).load_state_dict(state_dict)
-
-    def init_weights(self):
-        """Xavier initialization for the fully connected layer
-        """
-        r = np.sqrt(6.) / np.sqrt(self.fc.in_features +
-                                  self.fc.out_features)
-        self.fc.weight.data.uniform_(-r, r)
-        self.fc.bias.data.fill_(0)
-
-    def forward(self, images):
-        """Extract image feature vectors."""
-        features = self.cnn(images)
-
-        # normalization in the image embedding space
-        features = l2norm(features)
-
-        # linear projection to the joint embedding space
-        features = self.fc(features)
-
-        # normalization in the joint embedding space
-        if not self.no_imgnorm:
-            features = l2norm(features)
-
-        # take the absolute value of the embedding (used in order embeddings)
-        if self.use_abs:
-            features = torch.abs(features)
-
-        return features
-
-
 class EncoderImagePrecomp(nn.Module):
 
     def __init__(self, img_dim, embed_size, use_abs=False, no_imgnorm=False):
@@ -238,7 +124,7 @@ class EncoderImagePrecomp(nn.Module):
 class EncoderText(nn.Module):
 
     def __init__(self, vocab_size, word_dim, embed_size, num_layers,
-                 bidi=False, maxtime=False, use_abs=False):
+                 bidi=False, maxtime=True, use_abs=False):
         super(EncoderText, self).__init__()
         self.use_abs = use_abs
         self.embed_size = embed_size
@@ -270,6 +156,7 @@ class EncoderText(nn.Module):
         # Take max over time.
         if self.maxtime:
             out = torch.max(padded[0], 1)[0]
+        # Take last hidden state.
         else:
             I = torch.LongTensor(lengths).view(-1, 1, 1)
             I = Variable(I.expand(x.size(0), 1, self.embed_size)-1).cuda()
@@ -416,10 +303,7 @@ class VSE(object):
         # tutorials/09 - Image Captioning
         # Build Models
         self.grad_clip = opt.grad_clip
-        self.img_enc = EncoderImage(opt.data_name, opt.img_dim, opt.embed_size,
-                                    opt.finetune, opt.cnn_type,
-                                    use_abs=opt.use_abs,
-                                    no_imgnorm=opt.no_imgnorm)
+        self.img_enc = EncoderImagePrecomp(opt.img_dim, opt.embed_size, opt.use_abs, opt.no_imgnorm)
         self.txt_enc = EncoderText(opt.vocab_size, opt.word_dim,
                                    opt.embed_size, opt.num_layers, opt.bidi,
                                    use_abs=opt.use_abs)
@@ -434,8 +318,6 @@ class VSE(object):
                                          max_violation=opt.max_violation)
         params = list(self.txt_enc.parameters())
         params += list(self.img_enc.fc.parameters())
-        if opt.finetune:
-            params += list(self.img_enc.cnn.parameters())
         self.params = params
 
         self.optimizer = torch.optim.Adam(params, lr=opt.learning_rate)

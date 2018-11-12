@@ -1,10 +1,12 @@
 import os 
 import re
 import pickle
+import random
 from collections import Counter
 import numpy as np  
 import nltk
 from torch.utils.data import DataLoader, Dataset
+import torch
 from vocab import Vocabulary
 
 COCO_PATH = '/roaming/u1257964/coco_mulisera'
@@ -145,11 +147,9 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
         a = np.arange(image_vectors.shape[0] - 1)
         np.random.shuffle(a)
         img_inds = a[:downsample]
-        print(img_inds)
         #Generate indices for the corresponding captions
         cap_inds = [np.arange(x*5, (x*5)+5) for x in img_inds]
         cap_inds = [y for x in cap_inds for y in x]
-        print(cap_inds)
         #Pick the samples
         image_vectors = image_vectors[img_inds]
         captions = captions[cap_inds]
@@ -160,10 +160,10 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
 
 def load_data(name, split, lang_prefix, downsample=False):
     print("Loading {}, split {}".format(name, split))
-    if name == 'coconumpy':
+    if name == 'coco':
         # Downsample coco valset because its huge
         if split == 'val':
-            downsample = 5000
+            downsample = 1000
         path = COCO_PATH
         img, cap = read_coco(path, split, lang_prefix, downsample)
     elif name == 'm30ken':
@@ -184,23 +184,23 @@ class ImageCaptionDataset(Dataset):
     Load precomputed captions and image features
     """
 
-    def __init__(self, captions, images, vocab=None):
+    def __init__(self, captions, images, path, vocab=None):
         # Captions
         self.captions = captions
         self.images = images
         self.length = len(self.captions)
+        self.vocab = vocab
         print("Tokenizing")
         self.tokenized_captions = [tokenize(x) for x in captions]
-        if not vocab:
-            self.vocab = build_vocabulary(self.tokenized_captions)
+        print(vocab)
 
     def __getitem__(self, index):
         image = torch.Tensor(self.images[index])
         tokens = self.tokenized_captions[index]
         caption = []
-        caption.append(vocab('<start>'))
-        caption.extend([vocab(token) for token in tokens])
-        caption.append(vocab('<end>'))
+        caption.append(self.vocab('<start>'))
+        caption.extend([self.vocab(token) for token in tokens])
+        caption.append(self.vocab('<end>'))
         target = torch.Tensor(caption)
         return image, target, index, index
 
@@ -211,8 +211,11 @@ class DatasetCollection():
     
     def __init__(self):
         self.data_loaders = {}
+        self.data_iterators = {}
         self.data_sets = {}
         self.val_loaders = {}
+        self.val_sets = {}
+        self.vocab = None
 
     def add_trainset(self, name, dset, batch_size):
         data_loader = DataLoader(dataset=dset,
@@ -221,23 +224,32 @@ class DatasetCollection():
                                  pin_memory=True,
                                  collate_fn=collate_fn)
         self.data_sets[name] = dset
-        self.data_loaders[name] = iter(data_loader)
-    
+        self.data_loaders[name] = data_loader
+        self.data_iterators[name] = iter(data_loader)
+
     def add_valset(self, name, dset, batch_size):
         data_loader = DataLoader(dataset=dset,
                                  batch_size=batch_size,
                                  shuffle=False,
                                  pin_memory=True,
                                  collate_fn=collate_fn)
+        self.val_sets[name] = dset
         self.val_loaders[name] = data_loader
     
+    def get_valloader(self, name):
+        return self.val_loaders[name]
+
     def compute_joint_vocab(self):
         """Join the captions of all data sets and recompute the vocabulary."""
         caps = [v.tokenized_captions for k, v in self.data_sets.items()]
         caps = [y for x in caps for y in x]
         vocab = build_vocabulary(caps)
+        self.vocab = vocab
         for i in self.data_sets:
-            self.data_sets[i].vocab = vocab
+            self.data_sets[i].vocab = self.vocab
+            self.data_loaders[i].dataset.vocab = self.vocab
+            self.val_sets[i].vocab = self.vocab
+            self.val_loaders[i].dataset.vocab = self.vocab
 
     def __iter__(self):
         return self
@@ -245,23 +257,23 @@ class DatasetCollection():
     def next(self):
         """Pick a data loader, either yield next batch or if ran out re-init and yield."""
         k = random.choice(self.data_loaders.keys())
-        loader = self.data_sets[k]
+        loader = self.data_iterators[k]
         try:
-            image, target, index, index = next(loader)
+            images, targets, lengths, ids = next(loader)
         except StopIteration:
-            self.data_loaders[k] = iter(self.data_loaders[k])
-            loader = self.data_loaders[k]
-            image, target, index, index = next(loader)
-        return image, target, index, index 
+            self.data_iterators[k] = iter(self.data_loaders[k])
+            loader = self.data_iterators[k]
+            images, targets, lengths, ids = next(loader)
+        return images, targets, lengths, ids
 
 
-def get_loaders(data_sets, lang_prefix, downsample, batch_size):
+def get_loaders(data_sets, lang_prefix, downsample, batch_size, path):
     data_loaders = DatasetCollection()
     for name in data_sets:
         train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
         val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
-        trainset = ImageCaptionDataset(train_cap, train_img)
-        valset = ImageCaptionDataset(val_cap, val_img, vocab=trainset.vocab)
+        trainset = ImageCaptionDataset(train_cap, train_img, path)
+        valset = ImageCaptionDataset(val_cap, val_img, path) 
         data_loaders.add_trainset(name, trainset, batch_size)
         data_loaders.add_valset(name, valset, batch_size)
     data_loaders.compute_joint_vocab()
