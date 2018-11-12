@@ -1,10 +1,12 @@
 import os 
 import re
 import pickle
+import random
 from collections import Counter
 import numpy as np  
 import nltk
 from torch.utils.data import DataLoader, Dataset
+import torch
 from vocab import Vocabulary
 
 COCO_PATH = '/roaming/u1257964/coco_mulisera'
@@ -145,11 +147,9 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
         a = np.arange(image_vectors.shape[0] - 1)
         np.random.shuffle(a)
         img_inds = a[:downsample]
-        print(img_inds)
         #Generate indices for the corresponding captions
         cap_inds = [np.arange(x*5, (x*5)+5) for x in img_inds]
         cap_inds = [y for x in cap_inds for y in x]
-        print(cap_inds)
         #Pick the samples
         image_vectors = image_vectors[img_inds]
         captions = captions[cap_inds]
@@ -160,7 +160,7 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
 
 def load_data(name, split, lang_prefix, downsample=False):
     print("Loading {}, split {}".format(name, split))
-    if name == 'coconumpy':
+    if name == 'coco':
         # Downsample coco valset because its huge
         if split == 'val':
             downsample = 5000
@@ -198,9 +198,9 @@ class ImageCaptionDataset(Dataset):
         image = torch.Tensor(self.images[index])
         tokens = self.tokenized_captions[index]
         caption = []
-        caption.append(vocab('<start>'))
-        caption.extend([vocab(token) for token in tokens])
-        caption.append(vocab('<end>'))
+        caption.append(self.vocab('<start>'))
+        caption.extend([self.vocab(token) for token in tokens])
+        caption.append(self.vocab('<end>'))
         target = torch.Tensor(caption)
         return image, target, index, index
 
@@ -245,7 +245,7 @@ class DatasetCollection():
     def next(self):
         """Pick a data loader, either yield next batch or if ran out re-init and yield."""
         k = random.choice(self.data_loaders.keys())
-        loader = self.data_sets[k]
+        loader = self.data_loaders[k]
         try:
             image, target, index, index = next(loader)
         except StopIteration:
