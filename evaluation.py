@@ -2,7 +2,7 @@ from __future__ import print_function
 import os
 import pickle
 import itertools 
-from data import get_test_loader
+from data2 import get_test_loader
 import time
 import numpy
 import pandas
@@ -182,12 +182,9 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
 def run_eval(model, data_loader, fold5, opt, loader_lang):
     print('Computing results for {}...'.format(loader_lang))
     img_embs, cap_embs, val_loss = encode_data(model, data_loader)
-
+    n_caps = 5
+    print(img_embs.shape, cap_embs.shape)
     if not fold5:
-        if loader_lang in ['en', 'de']:
-            n_caps = 5
-        else:
-            n_caps = 1
         # no cross-validation, full evaluation
         r, rt = i2t(img_embs, cap_embs, measure=opt.measure, n=n_caps, return_ranks=True)
         ri, rti = t2i(img_embs, cap_embs,
@@ -241,7 +238,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
     return img_embs, cap_embs
 
 
-def evalrank(model_path, data_path=None, split='dev', fold5=False, 
+def evalrank(model_path, data_set, split='dev', fold5=False, 
              lang=None, caption_rank=False, dump_word_embeddings=False,
 	     dump_image_embeddings=False, dump_caption_embeddings=False):
     """
@@ -249,65 +246,49 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False,
     cross-validation is done (only for MSCOCO). Otherwise, the full data is
     used for evaluation.
     """
+    datasets = data_set.split('-')
     # load model and options
     checkpoint = torch.load(model_path)
     opt = checkpoint['opt']
-    if data_path is not None:
-        opt.data_path = data_path
 
     # Never use undersample when testing.
     opt.undersample = False
     print(opt)
     
     #Load vocabulary used by the model
-    if opt.data_name != "m30k":
-        with open(os.path.join(opt.vocab_path,
-                               '%s_vocab.pkl' % opt.data_name), 'rb') as f:
-            vocab = pickle.load(f)
-            opt.vocab_size = len(vocab)
-    else:
-        vocab = pickle.load(open(os.path.join(opt.logger_name, 'vocab.pkl')))
+    with open(os.path.join(opt.vocab_path, 'vocab.pkl'), 'rb') as f:
+        vocab = pickle.load(f)
+        opt.vocab_size = len(vocab)
 
     # construct model
     model = VSE(opt)
 
     # load model state
     model.load_state_dict(checkpoint['model'])
-    print('Loading dataset')
-    if lang is not None:
-        opt.lang = lang
-    langs = opt.lang.split('-')
-    data_loader = get_test_loader(split, opt.data_name, vocab, opt.crop_size,
-                                  opt.batch_size, opt.workers, opt)
-    if len(langs) > 1:
-        emb_dict = {}
-        for data, loader_lang in zip(data_loader, langs):
-            loader = data
-            img_emb, cap_emb = run_eval(model, loader, fold5, opt, loader_lang)
-            if caption_rank:
-                emb_dict[loader_lang] = cap_emb
-	    if dump_image_embeddings:
-		path = os.path.join(os.path.dirname(model_path), 'image_embeddings.vec')
-		numpy.save(path, img_emb)	
-	    if dump_caption_embeddings:
-		path = os.path.join(os.path.dirname(model_path), 'caption_embeddings.vec')
-		numpy.save(path, cap_emb)	
+    
+    emb_dict = {}
+    for name in datasets:
+        loader = get_test_loader(name, split, opt.batch_size, lang_prefix=False, downsample=False)
+        loader.dataset.vocab = vocab
+        img_emb, cap_emb = run_eval(model, loader, fold5, opt, name)
         if caption_rank:
-            for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
-                print(l1,l2)
-                if l1 in ['en', 'de']:
-                    n_caps = 5
-                else:
-                    n_caps = 1
-                ca, cb = emb_dict[l1], emb_dict[l2]
-                r, rt = i2t(ca, cb, measure=opt.measure, n=n_caps, return_ranks=True)
-                ar = (r[0] + r[1] + r[2]) / 3
-                rsum = r[0] + r[1] + r[2] 
-                r = (l1,l2,) +  r + (ar,) 
-                print("rsum: %.1f" % rsum)
-                print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
-    else:
-        run_eval(model, data_loader, fold5, opt, opt.lang)
+            emb_dict[name] = cap_emb
+        if dump_image_embeddings:
+            path = os.path.join(os.path.dirname(model_path), 'image_embeddings.vec')
+            numpy.save(path, img_emb)	
+        if dump_caption_embeddings:
+            path = os.path.join(os.path.dirname(model_path), 'caption_embeddings.vec')
+            numpy.save(path, cap_emb)	
+    if caption_rank:
+        for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
+            print(l1,l2)
+            ca, cb = emb_dict[l1], emb_dict[l2]
+            r, rt = i2t(ca, cb, measure=opt.measure, n=5, return_ranks=True)
+            ar = (r[0] + r[1] + r[2]) / 3
+            rsum = r[0] + r[1] + r[2] 
+            r = (l1,l2,) +  r + (ar,) 
+            print("rsum: %.1f" % rsum)
+            print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
     
     if dump_word_embeddings:
         v_sorted = sorted(vocab.idx2word.items(), key=lambda x: x[0])
@@ -422,11 +403,11 @@ def t2i(images, captions, n=5, npts=None, measure='cosine', return_ranks=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default=os.environ.get("PT_DATA_DIR"))
+    parser.add_argument("--data_set", type=str, default='m30ken-m30kde',
+                        help='For now the eval is setup to run on M30K task 2.')
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--fold5", action="store_true")
     parser.add_argument("--split", default="val")
-    parser.add_argument("--lang", type=str, default=None)
     parser.add_argument("--caption_rank", action="store_true", 
                        help="Run cross-lingual sentenceranking experiment")
     parser.add_argument("--dump_word_embeddings", action="store_true", 
@@ -436,8 +417,8 @@ if __name__ == "__main__":
     parser.add_argument("--dump_caption_embeddings", action="store_true", 
                        help="Save word embeddings to model directory.") 
     args = parser.parse_args()
-    evalrank(args.model_path, data_path=args.data_path, split=args.split,
-             fold5=args.fold5, lang=args.lang, caption_rank=args.caption_rank,
+    evalrank(args.model_path, data_set=args.data_set, split=args.split,
+             fold5=args.fold5, caption_rank=args.caption_rank,
              dump_word_embeddings=args.dump_word_embeddings,
 	     dump_image_embeddings=args.dump_image_embeddings,
 	     dump_caption_embeddings=args.dump_caption_embeddings)
