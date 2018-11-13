@@ -249,8 +249,9 @@ class DatasetCollection():
         for i in self.data_sets:
             self.data_sets[i].vocab = self.vocab
             self.data_loaders[i].dataset.vocab = self.vocab
-            self.val_sets[i].vocab = self.vocab
-            self.val_loaders[i].dataset.vocab = self.vocab
+        for j in self.val_sets:
+            self.val_sets[j].vocab = self.vocab
+            self.val_loaders[j].dataset.vocab = self.vocab
 
     def __iter__(self):
         return self
@@ -268,14 +269,17 @@ class DatasetCollection():
         return images, targets, lengths, ids
 
 
-def get_loaders(data_sets, lang_prefix, downsample, batch_size, path):
+def get_loaders(data_sets, val_sets, lang_prefix, downsample, batch_size, path):
     data_loaders = DatasetCollection()
+    print("Loading training sets.")
     for name in data_sets:
         train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
-        val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
         trainset = ImageCaptionDataset(train_cap, train_img)
-        valset = ImageCaptionDataset(val_cap, val_img) 
         data_loaders.add_trainset(name, trainset, batch_size)
+    print("Loading validation sets.")
+    for name in val_sets:
+        val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
+        valset = ImageCaptionDataset(val_cap, val_img) 
         data_loaders.add_valset(name, valset, batch_size)
     data_loaders.compute_joint_vocab(path)
     return data_loaders 
