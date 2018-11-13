@@ -23,6 +23,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_set',
                         help='Which data sets to train on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
+    parser.add_argument('--val_set',
+                        help='Which data sets to early stop on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
     parser.add_argument('--char_level', action='store_true',
                         help='Run character-level GRU.')
     parser.add_argument('--sentencepair', action='store_true',
@@ -107,7 +109,8 @@ def main():
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
     tb_logger.configure(opt.logger_name, flush_secs=5)
     datasets = opt.data_set.split('-')
-    loader = data.get_loaders(datasets, opt.lang_prefix, opt.downsample, opt.batch_size, opt.logger_name)
+    valsets = opt.val_set.split('-')
+    loader = data.get_loaders(datasets, valsets, opt.lang_prefix, opt.downsample, opt.batch_size, opt.logger_name)
     # Construct the model
     opt.vocab_size = len(loader.vocab.idx2word)
     model = VSE(opt)
@@ -141,6 +144,7 @@ def train(opt, loader, model):
     stop = False
     iters = 0
     datasets = opt.data_set.split('-')
+    valsets = opt.val_set.split('-')
     # switch to train mode
     model.train_start()
     #TODO Implement sentencepairs
@@ -233,7 +237,7 @@ def train(opt, loader, model):
         # validate at every val_step
         if model.Eiters % opt.val_step == 0:
             total_score = 0
-            for name in datasets:
+            for name in valsets:
                 vloader = loader.get_valloader(name)
                 with torch.no_grad():
                     score = validate(opt, vloader, model, name)
