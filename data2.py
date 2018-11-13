@@ -185,7 +185,7 @@ class ImageCaptionDataset(Dataset):
     Load precomputed captions and image features
     """
 
-    def __init__(self, captions, images, path, vocab=None):
+    def __init__(self, captions, images, vocab=None):
         # Captions
         self.captions = captions
         self.images = images
@@ -240,11 +240,11 @@ class DatasetCollection():
     def get_valloader(self, name):
         return self.val_loaders[name]
 
-    def compute_joint_vocab(self):
+    def compute_joint_vocab(self, path):
         """Join the captions of all data sets and recompute the vocabulary."""
         caps = [v.tokenized_captions for k, v in self.data_sets.items()]
         caps = [y for x in caps for y in x]
-        vocab = build_vocabulary(caps)
+        vocab = build_vocabulary(caps, path)
         self.vocab = vocab
         for i in self.data_sets:
             self.data_sets[i].vocab = self.vocab
@@ -273,9 +273,19 @@ def get_loaders(data_sets, lang_prefix, downsample, batch_size, path):
     for name in data_sets:
         train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
         val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
-        trainset = ImageCaptionDataset(train_cap, train_img, path)
-        valset = ImageCaptionDataset(val_cap, val_img, path) 
+        trainset = ImageCaptionDataset(train_cap, train_img)
+        valset = ImageCaptionDataset(val_cap, val_img) 
         data_loaders.add_trainset(name, trainset, batch_size)
         data_loaders.add_valset(name, valset, batch_size)
-    data_loaders.compute_joint_vocab()
+    data_loaders.compute_joint_vocab(path)
     return data_loaders 
+
+def get_test_loader(name, split, batch_size, lang_prefix, downsample=False):
+    img, cap = load_data(name, split, lang_prefix, downsample)
+    valset = ImageCaptionDataset(cap, img)
+    loader = DataLoader(dataset=valset,
+                        batch_size=batch_size,
+                        shuffle=False,
+                        pin_memory=True,
+                        collate_fn=collate_fn)
+    return loader
