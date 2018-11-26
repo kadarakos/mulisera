@@ -50,12 +50,14 @@ class ImageFolderDataset(data.Dataset):
             ``torchvision.transforms.Resize``. Default: ``None``.
         crop (int, optional): An optional integer to be given to
             ``torchvision.transforms.CenterCrop``. Default: ``None``.
+        indexname (str, optional): The name of the file that contains the list
+            of files that should be processed by the CNN. Default: index.txt
     """
-    def __init__(self, root, split, resize=None, crop=None):
+    def __init__(self, root, split, resize=None, crop=None, indexname="index.txt"):
         self.split = split
         self.root = Path(root).expanduser().resolve() / self.split
         # Image list in dataset order
-        self.index = self.root / 'index.txt'
+        self.index = self.root / indexname
         _transforms = []
         if resize is not None:
             _transforms.append(transforms.Resize(resize))
@@ -69,7 +71,7 @@ class ImageFolderDataset(data.Dataset):
 
         if not self.index.exists():
             raise(RuntimeError(
-                "index.txt does not exist in {}".format(self.root)))
+                "{} does not exist in {}".format(indexname, self.root)))
 
         self.image_files = []
         with self.index.open() as f:
@@ -105,10 +107,10 @@ def resnet_forward(cnn, x):
     avgp = avgp.view(avgp.size(0), -1)
     return res4f_relu, avgp
 
-def extract_img_feats(root, split, batch_size, output_path):
+def extract_img_feats(root, split, batch_size, output_path, indexname='index.txt'):
     split_name = split
     split = split + '2014'
-    dataset = ImageFolderDataset(root, split, resize=256, crop=224)
+    dataset = ImageFolderDataset(root, split, resize=256, crop=224, indexname=indexname)
     print('Root folder: {} (split: {}) ({} images)'.format(
         root, split, len(dataset)))
     loader = data.DataLoader(dataset, batch_size=batch_size)
