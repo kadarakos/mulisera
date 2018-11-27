@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 import torch
 from vocab import Vocabulary
 
-COCO_PATH = '/roaming/u1257964/coco_mulisera'
+COCO_PATH = '/roaming/u1257964/coco_mulisera_2'
 M30K_PATH = '/roaming/u1257964/multi30k-dataset/'
 
 def build_vocabulary(captions, path='.', threshold=4):
@@ -81,6 +81,7 @@ def tokenize(s):
     s = re.sub(r'([^\s\w]|_)+', '', s)
     tokens = nltk.tokenize.word_tokenize(s.lower().decode('utf-8'))
     return tokens
+
 
 def read_m30K(data_path, lang, split, lang_prefix=False):
     """
@@ -154,6 +155,8 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
         #Pick the samples
         image_vectors = image_vectors[img_inds]
         captions = captions[cap_inds]
+        print(image_vectors.shape)
+        print(len(captions))
     #Repeast each image 5 times
     images = np.repeat(image_vectors, 5, axis=0)
     return images, captions
@@ -162,11 +165,15 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
 def load_data(name, split, lang_prefix, downsample=False):
     print("Loading {}, split {}".format(name, split))
     if name == 'coco':
-        # Downsample coco valset because its huge
-        if split == 'val':
-            downsample = 1000
+        # Downsample coco valset, because of no reason
         path = COCO_PATH
         img, cap = read_coco(path, split, lang_prefix, downsample)
+        # Add restval to train for now
+        #TODO make restval thing optional
+        if split == 'train':
+            img2, cap2 = read_coco(path, 'restval', lang_prefix, downsample)
+            img = np.vstack([img, img2])
+            cap = np.concatenate([cap, cap2], axis=0)
     elif name == 'm30ken':
         path = M30K_PATH
         img, cap = read_m30K(path, 'en', split, lang_prefix)
@@ -236,9 +243,12 @@ class DatasetCollection():
                                  collate_fn=collate_fn)
         self.val_sets[name] = dset
         self.val_loaders[name] = data_loader
-    
+ 
     def get_valloader(self, name):
         return self.val_loaders[name]
+    
+    def get_trainloader(self, name):
+        return self.data_loaders[name]
 
     def compute_joint_vocab(self, path):
         """Join the captions of all data sets and recompute the vocabulary."""
