@@ -26,10 +26,13 @@ def extract_karpathy_valsets(root, output_path):
     print("Loading {}".format(path))
     d = json.load(open(path))
     
-    for split in ['val', 'restval', 'test']:
+    for split in ['val', 'restval', 'test', 'train']:
         if not os.path.exists(output_path):
             os.mkdir(output_path)
         imgs_path = os.path.join(coco_root, '{}{}'.format('val', 2014))
+        if split == 'train':
+            imgs_path = os.path.join(coco_root, '{}{}'.format('train', 2014))
+            
         ids2files = dict()
         
         ''' 
@@ -185,10 +188,11 @@ if __name__ == "__main__":
         os.mkdir(img_path)
 
     # Create text files to handle caption-image correspondances
-    extract(coco_root, output_path, "train")
+    #extract(coco_root, output_path, "train")
     extract_karpathy_valsets(coco_root, output_path)
     # Extract image features
+    extract_img_feats(coco_root, "train", args.batch_size, img_path, indexname="train-index.txt")
     extract_img_feats(coco_root, "val", args.batch_size, img_path, indexname="val-index.txt")
-    extract_img_feats(coco_root, "test", args.batch_size, img_path, indexname="test-index.txt")
-    extract_img_feats(coco_root, "train", args.batch_size, img_path)
+    extract_img_feats(coco_root, "val", args.batch_size, img_path, savename='restval', indexname="restval-index.txt")
+    extract_img_feats(coco_root, "val", args.batch_size, img_path, savename='test', indexname="test-index.txt")
 

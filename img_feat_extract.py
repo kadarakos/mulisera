@@ -107,8 +107,8 @@ def resnet_forward(cnn, x):
     avgp = avgp.view(avgp.size(0), -1)
     return res4f_relu, avgp
 
-def extract_img_feats(root, split, batch_size, output_path, indexname='index.txt'):
-    split_name = split
+def extract_img_feats(root, split, batch_size, output_path, savename=None, indexname='index.txt'):
+    split_name = split if not savename else savename
     split = split + '2014'
     dataset = ImageFolderDataset(root, split, resize=256, crop=224, indexname=indexname)
     print('Root folder: {} (split: {}) ({} images)'.format(
