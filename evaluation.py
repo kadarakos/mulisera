@@ -240,7 +240,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
 
 def evalrank(model_path, data_set, split='dev', fold5=False, 
              lang=None, caption_rank=False, dump_word_embeddings=False,
-	     dump_image_embeddings=False, dump_caption_embeddings=False):
+             dump_image_embeddings=False, dump_caption_embeddings=False):
     """
     Evaluate a trained model on either dev or test. If `fold5=True`, 5 fold
     cross-validation is done (only for MSCOCO). Otherwise, the full data is
