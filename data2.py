@@ -225,17 +225,17 @@ class DatasetCollection():
         self.val_sets = {}
         self.vocab = None
 
-    def add_trainset(self, name, dset, batch_size):
+    def add_trainset(self, name, dset, batch_size, shuffle=True):
         data_loader = DataLoader(dataset=dset,
                                  batch_size=batch_size,
-                                 shuffle=True,
+                                 shuffle=shuffle,
                                  pin_memory=True,
                                  collate_fn=collate_fn)
         self.data_sets[name] = dset
         self.data_loaders[name] = data_loader
         self.data_iterators[name] = iter(data_loader)
 
-    def add_valset(self, name, dset, batch_size):
+    def add_valset(self, name, dset, batch_size, shuffle=False):
         data_loader = DataLoader(dataset=dset,
                                  batch_size=batch_size,
                                  shuffle=False,
@@ -279,13 +279,13 @@ class DatasetCollection():
         return images, targets, lengths, ids
 
 
-def get_loaders(data_sets, val_sets, lang_prefix, downsample, batch_size, path):
+def get_loaders(data_sets, val_sets, lang_prefix, downsample, batch_size, path, shuffle_train=True):
     data_loaders = DatasetCollection()
     print("Loading training sets.")
     for name in data_sets:
         train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
         trainset = ImageCaptionDataset(train_cap, train_img)
-        data_loaders.add_trainset(name, trainset, batch_size)
+        data_loaders.add_trainset(name, trainset, batch_size, shuffle_train)
     print("Loading validation sets.")
     for name in val_sets:
         val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
