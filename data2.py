@@ -162,6 +162,34 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
     return images, captions
 
 
+def read_synthetic(dataname, model_path, lang_prefix=False):
+    """
+    Reads synthetic captions from model_path.
+    
+    data_path : str
+        Root of the coco_mulisra directory created with coco_process.py
+    split : str
+        train, val or test.
+    lang_prefix : bool
+        Place en_ prefix infront of each token.
+    downsample : int
+        Number of images to keep.
+    """
+    caps = []
+    model_parent = model_path
+    for f in os.listdir(model_parent):
+        if f == "{}_synthetic_cap.txt".format(dataname):
+            cap_file = f
+    path = os.path.join(model_parent, cap_file)
+    with open(path) as f:
+        t = f.read().split('\n')
+        #TODO implement lang_prefix
+        if lang_prefix:
+            pass
+        caps = t[:-1]
+    return caps
+
+
 def load_data(name, split, lang_prefix, downsample=False):
     print("Loading {}, split {}".format(name, split))
     if name == 'coco':
@@ -279,13 +307,29 @@ class DatasetCollection():
         return images, targets, lengths, ids
 
 
-def get_loaders(data_sets, val_sets, lang_prefix, downsample, batch_size, path, shuffle_train=True):
+def get_loaders(data_sets, val_sets, lang_prefix, downsample, 
+                path, batch_size, synth_path=None, shuffle_train=True):
     data_loaders = DatasetCollection()
+    synthcaps = []
+    synthnames = []
     print("Loading training sets.")
     for name in data_sets:
-        train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
-        trainset = ImageCaptionDataset(train_cap, train_img)
-        data_loaders.add_trainset(name, trainset, batch_size, shuffle_train)
+        if "synthetic" in name:
+            synthset = name.split("_")[1]
+            synthnames.append(synthset)
+            #HACK new logger name eds with _2 and original is upt to that 
+            synthcap = read_synthetic(synthset, synth_path, lang_prefix)
+            synthcaps.append(synthcap)
+        else:
+            train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
+            trainset = ImageCaptionDataset(train_cap, train_img)
+            data_loaders.add_trainset(name, trainset, batch_size, shuffle_train)
+    print("Adding synthetic data sets")
+    for name, cap in zip(synthnames, synthcaps):
+        img = data_loaders.data_loaders[name].dataset.images
+        n = "synth"+name
+        s = ImageCaptionDataset(cap, img)
+        data_loaders.add_trainset(n, s, batch_size, shuffle_train)
     print("Loading validation sets.")
     for name in val_sets:
         val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)

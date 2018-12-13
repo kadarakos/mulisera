@@ -23,6 +23,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_set',
                         help='Which data sets to train on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
+    parser.add_argument('--synth_path',
+                        help='Path to the model from which to read the synthetic data sets from.')
     parser.add_argument('--val_set',
                         help='Which data sets to early stop on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
     parser.add_argument('--char_level', action='store_true',
@@ -110,7 +112,9 @@ def main():
     tb_logger.configure(opt.logger_name, flush_secs=5)
     datasets = opt.data_set.split('-')
     valsets = opt.val_set.split('-')
-    loader = data.get_loaders(datasets, valsets, opt.lang_prefix, opt.downsample, opt.batch_size, opt.logger_name)
+    loader = data.get_loaders(datasets, valsets, opt.lang_prefix, 
+                              opt.downsample, opt.logger_name, opt.batch_size, 
+                              synth_path=opt.synth_path)
     # Construct the model
     opt.vocab_size = len(loader.vocab.idx2word)
     model = VSE(opt)
