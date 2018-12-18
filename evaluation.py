@@ -181,6 +181,7 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
 
 def run_eval(model, data_loader, fold5, opt, loader_lang):
     print('Computing results for {}...'.format(loader_lang))
+    logs = {}
     img_embs, cap_embs, val_loss = encode_data(model, data_loader)
     n_caps = 5
     print(img_embs.shape, cap_embs.shape)
@@ -194,6 +195,8 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
         rsum = r[0] + r[1] + r[2] + ri[0] + ri[1] + ri[2]
         r = (loader_lang,) + r + (ar,)  # python tuple concat
         ri = (loader_lang,) + ri + (ari,)  # python tuple concat
+        logs["i2t"] = r[1:]
+        logs["t2i"] = ri[1:]
         print("rsum: %.1f" % rsum)
         #print("Average i2t Recall: %.1f" % ar)
         print(" %s Image to text: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
@@ -201,6 +204,8 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
         #print("Average t2i Recall: %.1f" % ari)
         print(" %s Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
         #print("Text to image: %.1f %.1f %.1f %.1f %.1f" % ri)
+        with open(os.path.join(opt.logger_name, '{}_img2cap.pkl'.format(r[0])), "w") as f:
+            pickle.dump(logs, f)
     else:
         # 5fold cross-validation, only for MSCOCO
         results = []
@@ -310,7 +315,6 @@ def i2t(images, captions, npts=None, n=5, measure='cosine', return_ranks=False):
     if npts is None:
         npts = images.shape[0] / n
     index_list = []
-
     ranks = numpy.zeros(npts)
     top1 = numpy.zeros(npts)
     for index in range(npts):
@@ -363,7 +367,6 @@ def t2i(images, captions, n=5, npts=None, measure='cosine', return_ranks=False):
     if npts is None:
         npts = images.shape[0] / n
     ims = numpy.array([images[i] for i in range(0, len(images), n)])
-
     ranks = numpy.zeros(n * npts)
     top1 = numpy.zeros(n * npts)
     for index in range(npts):
