@@ -64,7 +64,7 @@ def create_synthetic_dataset(model_path, dataset1, dataset2):
     """
     img, caps = load_data(dataset2, 'train', False)
     del img
-    #compute_embeddings(model_path)
+    compute_embeddings(model_path)
     emb1_path = os.path.join(os.path.dirname(model_path), '{}_cap_emb.npy'.format(dataset1))
     emb2_path = os.path.join(os.path.dirname(model_path), '{}_cap_emb.npy'.format(dataset2))
     print("Loading {}".format(emb1_path))
@@ -80,7 +80,7 @@ def create_synthetic_dataset(model_path, dataset1, dataset2):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_set", type=str,
-                        help='Data sets to merge. Annotate the images of the 2nd dataset with the cations of the 1st.')
+                        help='Data sets to merge. Annotate the images of the 1st dataset with the cations of the 2nd.')
     parser.add_argument("--model_path", type=str, required=True,
                         help="Path to the model checkpoint.")
     args = parser.parse_args()
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     else:
         d1, d2 = datasets
         caps = create_synthetic_dataset(args.model_path, d1, d2)
-        out_path = os.path.join(os.path.dirname(args.model_path), "{}_synthetic_cap.txt".format(datasets[0]))
+        out_path = os.path.join(os.path.dirname(args.model_path), "{}_{}.txt".format(datasets[1], datasets[0]))
         print("Writing caps in {}".format(out_path))
         with open(out_path, 'w') as f:
             for line in caps:
