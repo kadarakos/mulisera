@@ -16,105 +16,36 @@ import tensorboard_logger as tb_logger
 from torch.nn.utils.clip_grad import clip_grad_norm
 import argparse
 
+SEEDS = [112, 1865, 57493]
 rseed = 41376566
 
-def main():
+def main(opt, seed=None):
     # Hyper Parameters
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data_set',
-                        help='Which data sets to train on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
-    parser.add_argument('--synth_path',
-                        help='Path to the model from which to read the synthetic data sets from.')
-    parser.add_argument('--val_set',
-                        help='Which data sets to early stop on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
-    parser.add_argument('--char_level', action='store_true',
-                        help='Run character-level GRU.')
-    parser.add_argument('--sentencepair', action='store_true',
-                        help='Train caption-caption ranking as well.')
-    parser.add_argument('--sentencepair_p', default=0.5, type=float,
-                        help='Probability of training on caption-caption and not image-caption.')
-    parser.add_argument('--primary', default=None,
-                        help='Which language to monitor for early stopping. Multiple with l1-l2-l3')
-    parser.add_argument('--downsample', type=int,
-                        help='How many training samples to keep for COCO.')
-    parser.add_argument('--lang_prefix', action='store_true',
-                        help='Put the language id infront of each word to split vocabularies.')
-    parser.add_argument('--margin', default=0.2, type=float,
-                        help='Rank loss margin.')
-    parser.add_argument('--num_epochs', default=30, type=int,
-                        help='Number of training epochs.')
-    parser.add_argument('--patience', default=10, type=int,
-                        help='Number of validation steps to tolerate without improvement.')
-    parser.add_argument('--batch_size', default=128, type=int,
-                        help='Size of a training mini-batch.')
-    parser.add_argument('--word_dim', default=300, type=int,
-                        help='Dimensionality of the word embedding.')
-    parser.add_argument('--embed_size', default=1024, type=int,
-                        help='Dimensionality of the joint embedding.')
-    parser.add_argument('--bidi', action='store_true',
-                        help='Run BiGRU instead of GRU.')
-    parser.add_argument('--grad_clip', default=2., type=float,
-                        help='Gradient clipping threshold.')
-    parser.add_argument('--num_layers', default=1, type=int,
-                        help='Number of GRU layers.')
-    parser.add_argument('--learning_rate', default=.0002, type=float,
-                        help='Initial learning rate.')
-    parser.add_argument('--lr_update', default=15, type=int,
-                        help='Number of epochs to update the learning rate.')
-    parser.add_argument('--workers', default=10, type=int,
-                        help='Number of data loader workers.')
-    parser.add_argument('--log_step', default=10, type=int,
-                        help='Number of steps to print and record the log.')
-    parser.add_argument('--val_step', default=500, type=int,
-                        help='Number of steps to run validation.')
-    parser.add_argument('--logger_path', default='.', 
-                        help='Path where to save the model and Tensorboard log.')
-    parser.add_argument('--logger_name',
-                        help='Name of the folder where to save the model and Tensorboard log.')
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
-    parser.add_argument('--sum_violation', dest="max_violation", action='store_false',
-                        help='Use max instead of sum in the rank loss.')
-    parser.add_argument('--img_dim', default=2048, type=int,
-                        help='Dimensionality of the image embedding.')
-    parser.add_argument('--use_restval', action='store_true',
-                        help='Use the restval data for training on MSCOCO.')
-    parser.add_argument('--measure', default='cosine',
-                        help='Similarity measure used (cosine|order)')
-    parser.add_argument('--use_abs', action='store_true',
-                        help='Take the absolute value of embedding vectors.')
-    parser.add_argument('--no_imgnorm', action='store_true',
-                        help='Do not normalize the image embeddings.')
-    parser.add_argument('--reset_train', action='store_true',
-                        help='Ensure the training is always done in '
-                        'train mode (Not recommended).')
-    parser.add_argument('--seed', default=42, type=int,
-                        help='Random seed.')
-    opt = parser.parse_args()
 
     if torch.__version__ >= "0.3":
         opt.reset_train = True
-
+    #TODO default dirname
     if opt.logger_name is None:
-        name = "lang{}_half-{}_undersample-{}_disaligned-{}_sentencepair-{}_primary-{}_epochs-{}"
-        name = name.format(opt.lang, opt.half, opt.undersample, opt.disaligned, opt.sentencepair, opt.primary, opt.num_epochs)
-        opt.logger_name = os.path.join(opt.data_name, name)
-            
-    opt.logger_name = os.path.join(opt.logger_path, opt.logger_name, str(opt.seed))
-    opt.vocab_path = opt.logger_name
-    random.seed(rseed+opt.seed)
-    np.random.seed(rseed+opt.seed)
-    torch.cuda.manual_seed(rseed+opt.seed)
-    torch.cuda.manual_seed_all(rseed+opt.seed)
+        pass
+    if seed:
+        seed = seed
+    else:
+        seed = opt.seed
+    #opt.logger_name = os.path.join(opt.logger_name, str(seed)
+    opt.vocab_path = os.path.join(opt.logger_name, str(seed))
+    random.seed(rseed+seed)
+    np.random.seed(rseed+seed)
+    torch.cuda.manual_seed(rseed+seed)
+    torch.cuda.manual_seed_all(rseed+seed)
     print(opt)
 
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
-    tb_logger.configure(opt.logger_name, flush_secs=5)
+    tb_logger.configure(os.path.join(opt.logger_name, str(seed)), flush_secs=5)
     datasets = opt.data_set.split('-')
     valsets = opt.val_set.split('-')
     loader = data.get_loaders(datasets, valsets, opt.lang_prefix, 
-                              opt.downsample, opt.logger_name, opt.batch_size, 
-                              synth_path=opt.synth_path)
+                              opt.downsample, os.path.join(opt.logger_name, str(seed)), 
+                              opt.batch_size, synth_path=opt.synth_path)
     # Construct the model
     opt.vocab_size = len(loader.vocab.idx2word)
     model = VSE(opt)
@@ -137,9 +68,9 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(opt.resume))
     
-    train(opt, loader, model)
+    train(opt, loader, model, seed)
 
-def train(opt, loader, model):
+def train(opt, loader, model, seed):
     # average meters to record the training statistics
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -273,10 +204,11 @@ def train(opt, loader, model):
                 'best_rsum': best_score,
                 'opt': opt,
                 'Eiters': model.Eiters,
-            }, is_best, prefix=opt.logger_name + '/')
+            }, is_best, prefix=os.path.join(opt.logger_name, str(seed)) + '/')
 
+    # Unconfigure tensorboard logger
+    tb_logger.tensorboard_logger._default_logger = None
     print("Finished trained. Best score: {}".format(best_score))
-
 
 def validate(opt, val_loader, model, lang, n=5):
     # compute the encoding for all the validation images and captions
@@ -327,4 +259,81 @@ def adjust_learning_rate(opt, optimizer, epoch):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_set',
+                        help='Which data sets to train on. m30ken, m30kde or coco. Train on multiple sets by m30kde_coco.')
+    parser.add_argument('--synth_path',
+                        help='Path to the model from which to read the synthetic data sets from.')
+    parser.add_argument('--val_set',
+                        help='Which data sets to early stop on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
+    parser.add_argument('--char_level', action='store_true',
+                        help='Run character-level GRU.')
+    parser.add_argument('--sentencepair', action='store_true',
+                        help='Train caption-caption ranking as well.')
+    parser.add_argument('--sentencepair_p', default=0.5, type=float,
+                        help='Probability of training on caption-caption and not image-caption.')
+    parser.add_argument('--primary', default=None,
+                        help='Which language to monitor for early stopping. Multiple with l1-l2-l3')
+    parser.add_argument('--downsample', type=int,
+                        help='How many training samples to keep for COCO.')
+    parser.add_argument('--lang_prefix', action='store_true',
+                        help='Put the language id infront of each word to split vocabularies.')
+    parser.add_argument('--margin', default=0.2, type=float,
+                        help='Rank loss margin.')
+    parser.add_argument('--num_epochs', default=30, type=int,
+                        help='Number of training epochs.')
+    parser.add_argument('--patience', default=10, type=int,
+                        help='Number of validation steps to tolerate without improvement.')
+    parser.add_argument('--batch_size', default=128, type=int,
+                        help='Size of a training mini-batch.')
+    parser.add_argument('--word_dim', default=300, type=int,
+                        help='Dimensionality of the word embedding.')
+    parser.add_argument('--embed_size', default=1024, type=int,
+                        help='Dimensionality of the joint embedding.')
+    parser.add_argument('--bidi', action='store_true',
+                        help='Run BiGRU instead of GRU.')
+    parser.add_argument('--grad_clip', default=2., type=float,
+                        help='Gradient clipping threshold.')
+    parser.add_argument('--num_layers', default=1, type=int,
+                        help='Number of GRU layers.')
+    parser.add_argument('--learning_rate', default=.0002, type=float,
+                        help='Initial learning rate.')
+    parser.add_argument('--lr_update', default=15, type=int,
+                        help='Number of epochs to update the learning rate.')
+    parser.add_argument('--workers', default=10, type=int,
+                        help='Number of data loader workers.')
+    parser.add_argument('--log_step', default=10, type=int,
+                        help='Number of steps to print and record the log.')
+    parser.add_argument('--val_step', default=500, type=int,
+                        help='Number of steps to run validation.')
+    parser.add_argument('--logger_path', default='.', 
+                        help='Path where to save the model and Tensorboard log.')
+    parser.add_argument('--logger_name',
+                        help='Name of the folder where to save the model and Tensorboard log.')
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('--sum_violation', dest="max_violation", action='store_false',
+                        help='Use max instead of sum in the rank loss.')
+    parser.add_argument('--img_dim', default=2048, type=int,
+                        help='Dimensionality of the image embedding.')
+    parser.add_argument('--use_restval', action='store_true',
+                        help='Use the restval data for training on MSCOCO.')
+    parser.add_argument('--measure', default='cosine',
+                        help='Similarity measure used (cosine|order)')
+    parser.add_argument('--use_abs', action='store_true',
+                        help='Take the absolute value of embedding vectors.')
+    parser.add_argument('--no_imgnorm', action='store_true',
+                        help='Do not normalize the image embeddings.')
+    parser.add_argument('--reset_train', action='store_true',
+                        help='Ensure the training is always done in '
+                        'train mode (Not recommended).')
+    parser.add_argument('--seed', default=42, type=int,
+                        help='Random seed.')
+    parser.add_argument('--multiseed', action='store_true',
+                        help='Use all seeds from SEED.')
+    opt = parser.parse_args()
+    if opt.multiseed:
+        for s in SEEDS:
+            main(opt, seed=s)
+    else:
+        main(opt)
