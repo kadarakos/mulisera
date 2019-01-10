@@ -13,6 +13,27 @@ from model import VSE, order_sim
 from collections import OrderedDict
 import random
 import argparse
+import numpy as np
+
+SEEDS = [112, 1865, 57493]
+
+def aggregate_results(datasets, paths):
+    for d in datasets:
+        i2t = []
+        t2i = []
+        for p in paths:
+            with open(os.path.join(p, "{}_img2cap.pkl".format(d)), 'r') as f:
+                logs = pickle.load(f)
+            i2t.append(logs['i2t'])
+            t2i.append(logs['t2i'])
+        print(d)
+        I2T = np.array(i2t)
+        T2I = np.array(t2i)
+        r = tuple(np.mean(I2T, axis=0))
+        ri = tuple(np.mean(T2I, axis=0))
+        print("Image to text: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
+        print("Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -179,7 +200,7 @@ def sentencepair_eval(model, sentencepair_loader, log_step=10, logging=print):
         del capA, capB
     return val_loss / i
 
-def run_eval(model, data_loader, fold5, opt, loader_lang):
+def run_eval(model, data_loader, fold5, opt, loader_lang, logpath):
     print('Computing results for {}...'.format(loader_lang))
     logs = {}
     img_embs, cap_embs, val_loss = encode_data(model, data_loader)
@@ -204,7 +225,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang):
         #print("Average t2i Recall: %.1f" % ari)
         print(" %s Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
         #print("Text to image: %.1f %.1f %.1f %.1f %.1f" % ri)
-        with open(os.path.join(opt.logger_name, '{}_img2cap.pkl'.format(r[0])), "w") as f:
+        with open(os.path.join(logpath, '{}_img2cap.pkl'.format(r[0])), "w") as f:
             pickle.dump(logs, f)
     else:
         # 5fold cross-validation, only for MSCOCO
@@ -275,7 +296,7 @@ def evalrank(model_path, data_set, split='dev', fold5=False,
     for name in datasets:
         loader = get_test_loader(name, split, opt.batch_size, lang_prefix=False, downsample=False)
         loader.dataset.vocab = vocab
-        img_emb, cap_emb = run_eval(model, loader, fold5, opt, name)
+        img_emb, cap_emb = run_eval(model, loader, fold5, opt, name, os.path.dirname(model_path))
         if caption_rank:
             emb_dict[name] = cap_emb
         if dump_image_embeddings:
@@ -419,9 +440,25 @@ if __name__ == "__main__":
                        help="Save word embeddings to model directory.") 
     parser.add_argument("--dump_caption_embeddings", action="store_true", 
                        help="Save word embeddings to model directory.") 
+    parser.add_argument('--multiseed', action='store_true',
+                        help='Use all seeds from SEED.')
     args = parser.parse_args()
-    evalrank(args.model_path, data_set=args.data_set, split=args.split,
-             fold5=args.fold5, caption_rank=args.caption_rank,
-             dump_word_embeddings=args.dump_word_embeddings,
-	     dump_image_embeddings=args.dump_image_embeddings,
-	     dump_caption_embeddings=args.dump_caption_embeddings)
+    if args.multiseed:
+        paths = []
+        for s in SEEDS:
+            model_path = os.path.join(os.path.join(args.model_path, str(s)), 'model_best.pth.tar')
+            evalrank(model_path, data_set=args.data_set, split=args.split,
+                     fold5=args.fold5, caption_rank=args.caption_rank,
+                     dump_word_embeddings=args.dump_word_embeddings,
+                 dump_image_embeddings=args.dump_image_embeddings,
+                 dump_caption_embeddings=args.dump_caption_embeddings)
+            paths.append(os.path.dirname(model_path))
+        datasets = args.data_set.split('-')
+        aggregate_results(datasets, paths)
+        
+    else:
+        evalrank(args.model_path, data_set=args.data_set, split=args.split,
+                 fold5=args.fold5, caption_rank=args.caption_rank,
+                 dump_word_embeddings=args.dump_word_embeddings,
+             dump_image_embeddings=args.dump_image_embeddings,
+             dump_caption_embeddings=args.dump_caption_embeddings)

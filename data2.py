@@ -8,13 +8,21 @@ import nltk
 from torch.utils.data import DataLoader, Dataset
 import torch
 from vocab import Vocabulary
+from itertools import combinations
 
 COCO_PATH = '/roaming/u1257964/coco_mulisera_2'
 M30K_PATH = '/roaming/u1257964/multi30k-dataset/'
 
 def build_vocabulary(captions, path='.', threshold=4):
     """
-    Build a simple vocabulary wrapper.
+    Build a simple vocabulary wrapper and save it to disk.
+
+    captions: list of lists of strings,
+        List of sentences tokenized.
+    path : str,
+        Path to write the vocabulary to disk to.
+    threshold : int,
+        Minimum term frequency.
     """
     print("Building vocabulary")
     counter = Counter()
@@ -23,7 +31,6 @@ def build_vocabulary(captions, path='.', threshold=4):
 
     # Discard if the occurrence of the word is less than min_word_cnt.
     words = [word for word, cnt in counter.items() if cnt >= threshold]
-
     # Create a vocab wrapper and add some special tokens.
     vocab = Vocabulary()
     vocab.add_word('<pad>')
@@ -70,7 +77,6 @@ def collate_fn(data):
     return images, targets, lengths, ids
 
 
-# prefix = lambda x: " ".join(map(lambda y: l+"_"+y, x.split()))
 def tokenize(s):
     """
     Remove non-alphanumeric characters, then tokenize.
@@ -176,10 +182,9 @@ def read_synthetic(dataname, model_path, lang_prefix=False):
         Number of images to keep.
     """
     caps = []
+    d1, d2 = dataname.split("_")
     model_parent = model_path
-    for f in os.listdir(model_parent):
-        if f == "{}_synthetic_cap.txt".format(dataname):
-            cap_file = f
+    cap_file = dataname+".txt"
     path = os.path.join(model_parent, cap_file)
     with open(path) as f:
         t = f.read().split('\n')
@@ -213,15 +218,14 @@ def load_data(name, split, lang_prefix, downsample=False):
     print("N images {}, N captions {}".format(len(img), len(cap)))
     return img, cap
         
-        
-
 class ImageCaptionDataset(Dataset):
     """
     Load precomputed captions and image features
     """
 
-    def __init__(self, captions, images, vocab=None):
+    def __init__(self, captions, images, vocab):
         # Captions
+        assert len(captions) == len(images)
         self.captions = captions
         self.images = images
         self.length = len(self.captions)
@@ -243,15 +247,46 @@ class ImageCaptionDataset(Dataset):
     def __len__(self):
         return self.length
 
+#FIXME This is just Sketch
+class SentencePairDataset(Dataset):
+    """
+    Load precomputed captions and image features
+    """
+
+    def __init__(self, captionsA, captionsB, vocab):
+        # Captions
+        assert len(captionsA) == len(captionsB)
+        self.captionsA = captionsA
+        self.captionsB = captionsB
+        self.length = len(self.captionsA)
+        self.vocab = vocab
+        print("Tokenizing")
+        self.tokenized_captions = [tokenize(x) for x in captions]
+
+    def __getitem__(self, index):
+        image = torch.Tensor(self.images[index])
+        tokens = self.tokenized_captions[index]
+        caption = []
+        caption.append(self.vocab('<start>'))
+        capt375Gion.extend([self.vocab(token) for token in tokens])
+        caption.append(self.vocab('<end>'))
+        target = torch.Tensor(caption)
+        return image, target, index, index
+
+    def __len__(self):
+        return self.length
+
 class DatasetCollection():
     
     def __init__(self):
-        self.data_loaders = {}
-        self.data_iterators = {}
-        self.data_sets = {}
-        self.val_loaders = {}
-        self.val_sets = {}
-        self.vocab = None
+        self.data_loaders = {}          # Data loaders for training sets.
+        self.data_iterators = {}        # Iterators for the train loaders.
+        self.data_sets = {}             # Names of the train sets.
+        self.val_loaders = {}           # Data loaders for validation sets.
+        self.val_sets = {}              # Names of the validation sets.
+        self.sentencepair_loaders = {}  # Just train loaders for sentence pairs.
+        self.image_sets = {}            # Names of the iamge sets the train sets come from.
+        self.vocab = None               # Shared vocab to be computed later.
 
     def add_trainset(self, name, dset, batch_size, shuffle=True):
         data_loader = DataLoader(dataset=dset,
@@ -262,6 +297,10 @@ class DatasetCollection():
         self.data_sets[name] = dset
         self.data_loaders[name] = data_loader
         self.data_iterators[name] = iter(data_loader)
+        n = name.split('_')
+        if n == ['m30ken'] or n == ['m30kde']:
+            n = ['m30k']
+        self.image_sets[name] = n[0] if len(n) == 1 else n[1] 
 
     def add_valset(self, name, dset, batch_size, shuffle=False):
         data_loader = DataLoader(dataset=dset,
@@ -271,6 +310,33 @@ class DatasetCollection():
                                  collate_fn=collate_fn)
         self.val_sets[name] = dset
         self.val_loaders[name] = data_loader
+    #FIXME THis is just a sketch
+    def generate_sentencepairs(self):
+        groups = {}
+        # Generate groups that share the same images
+        for key, value in sorted(self.image_sets.iteritems()):
+            groups.setdefault(value, []).append(key)
+        # Create all pairs per group
+        for g in groups:
+            group = groups[g]
+            if len(group) > 1:
+                caps = []
+                pairs = []
+                for name in group:
+                   dset = self.data_sets[name]
+                   cap = dset.tokenized_captions
+                   caps.append(cap)
+                for i in range(0, len(caps), 5):
+                    t = []
+                    for j in range(len(group)):
+                        t.append(caps[j][i:i+5])
+                        print(t)
+                    for pair in combinations(t, 2):
+                        pairs.append(pair)
+                self.caps = caps
+                capA, capB = zip(*pairs)
+                self.pappapa = [capA, capB]
+                self.pairs = pairs
  
     def get_valloader(self, name):
         return self.val_loaders[name]
@@ -314,33 +380,36 @@ def get_loaders(data_sets, val_sets, lang_prefix, downsample,
     synthnames = []
     print("Loading training sets.")
     for name in data_sets:
-        if "synthetic" in name:
-            synthset = name.split("_")[1]
-            synthnames.append(synthset)
-            #HACK new logger name eds with _2 and original is upt to that 
-            synthcap = read_synthetic(synthset, synth_path, lang_prefix)
+        if "_" in name:
+            synthnames.append(name)
+            synthcap = read_synthetic(name, synth_path, lang_prefix)
             synthcaps.append(synthcap)
         else:
             train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
-            trainset = ImageCaptionDataset(train_cap, train_img)
+            trainset = ImageCaptionDataset(train_cap, train_img, vocab=None)
             data_loaders.add_trainset(name, trainset, batch_size, shuffle_train)
     print("Adding synthetic data sets")
     for name, cap in zip(synthnames, synthcaps):
-        img = data_loaders.data_loaders[name].dataset.images
-        n = "synth"+name
-        s = ImageCaptionDataset(cap, img)
-        data_loaders.add_trainset(n, s, batch_size, shuffle_train)
+        img_name = name.split('_')[1]
+        img = data_loaders.data_loaders[img_name].dataset.images
+        #Removing FILTER-ed captions and their corresponding images
+        c = np.array(cap)
+        inds = np.where(c != 'FILTER')[0]
+        img = img[inds]
+        cap = list(c[inds])
+        s = ImageCaptionDataset(cap, img, vocab=None)
+        data_loaders.add_trainset(name, s, batch_size, shuffle_train)
     print("Loading validation sets.")
     for name in val_sets:
         val_img, val_cap = load_data(name, 'val', lang_prefix, downsample)
-        valset = ImageCaptionDataset(val_cap, val_img) 
+        valset = ImageCaptionDataset(val_cap, val_img, vocab=None) 
         data_loaders.add_valset(name, valset, batch_size)
     data_loaders.compute_joint_vocab(path)
     return data_loaders 
 
 def get_test_loader(name, split, batch_size, lang_prefix, downsample=False):
     img, cap = load_data(name, split, lang_prefix, downsample)
-    valset = ImageCaptionDataset(cap, img)
+    valset = ImageCaptionDataset(cap, img, vocab=None)
     loader = DataLoader(dataset=valset,
                         batch_size=batch_size,
                         shuffle=False,
