@@ -22,7 +22,7 @@ def aggregate_results(datasets, paths):
         i2t = []
         t2i = []
         for p in paths:
-            with open(os.path.join(p, "{}_img2cap.pkl".format(d)), 'r') as f:
+            with open(os.path.join(p, "{}_img2cap.pkl".format(d)), 'rb') as f:
                 logs = pickle.load(f)
             i2t.append(logs['i2t'])
             t2i.append(logs['t2i'])
@@ -80,7 +80,7 @@ class LogCollector(object):
         """Concatenate the meters in one log line
         """
         s = ''
-        for i, (k, v) in enumerate(self.meters.iteritems()):
+        for i, (k, v) in enumerate(self.meters.items()):
             if i > 0:
                 s += '  '
             s += k + ' ' + str(v)
@@ -225,7 +225,7 @@ def run_eval(model, data_loader, fold5, opt, loader_lang, logpath):
         #print("Average t2i Recall: %.1f" % ari)
         print(" %s Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
         #print("Text to image: %.1f %.1f %.1f %.1f %.1f" % ri)
-        with open(os.path.join(logpath, '{}_img2cap.pkl'.format(r[0])), "w") as f:
+        with open(os.path.join(logpath, '{}_img2cap.pkl'.format(r[0])), "wb") as f:
             pickle.dump(logs, f)
     else:
         # 5fold cross-validation, only for MSCOCO
@@ -334,7 +334,7 @@ def i2t(images, captions, npts=None, n=5, measure='cosine', return_ranks=False):
     Captions: (5N, K) matrix of captions
     """
     if npts is None:
-        npts = images.shape[0] / n
+        npts = images.shape[0] // n
     index_list = []
     ranks = numpy.zeros(npts)
     top1 = numpy.zeros(npts)
@@ -386,7 +386,7 @@ def t2i(images, captions, n=5, npts=None, measure='cosine', return_ranks=False):
     Captions: (5N, K) matrix of captions
     """
     if npts is None:
-        npts = images.shape[0] / n
+        npts = images.shape[0] // n
     ims = numpy.array([images[i] for i in range(0, len(images), n)])
     ranks = numpy.zeros(n * npts)
     top1 = numpy.zeros(n * npts)

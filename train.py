@@ -15,6 +15,8 @@ import logging
 import tensorboard_logger as tb_logger
 from torch.nn.utils.clip_grad import clip_grad_norm
 import argparse
+from compute_embeddings import create_synthetic_dataset
+
 
 SEEDS = [112, 1865, 57493]
 rseed = 41376566
@@ -45,7 +47,7 @@ def main(opt, seed=None):
     valsets = opt.val_set.split('-')
     loader = data.get_loaders(datasets, valsets, opt.lang_prefix, 
                               opt.downsample, os.path.join(opt.logger_name, str(seed)), 
-                              opt.batch_size, synth_path=opt.synth_path)
+                              opt.batch_size, synth_path=opt.synth_path, sentencepair=opt.sentencepair)
     # Construct the model
     opt.vocab_size = len(loader.vocab.idx2word)
     model = VSE(opt)
@@ -105,7 +107,7 @@ def train(opt, loader, model, seed):
         # Train caption-caption ranking.
         #TODO Update the sentencepair training
         if train_cap2cap and opt.sentencepair:
-            capA, capB, lenA, lenB = next(sentencepair_loader)
+            capA, capB, lenA, lenB = loader.next(sentencepair=True)
             captionsA = Variable(capA)
             captionsB = Variable(capB)
             if torch.cuda.is_available():
@@ -115,7 +117,7 @@ def train(opt, loader, model, seed):
             indsA = np.argsort(np.array(lenA))
             indsB = np.argsort(np.array(lenB))
             revA  = np.zeros(len(lenA), dtype='int')
-            revB  = np.zeros(len(lenA), dtype='int')
+            revB  = np.zeros(len(lenB), dtype='int')
             for i in range(len(lenA)):
                 revA[indsA[i]] = i
                 revB[indsB[i]] = i
@@ -124,8 +126,8 @@ def train(opt, loader, model, seed):
             if torch.cuda.is_available():
                 indsA, indsB = indsA.cuda(), indsB.cuda()
                 revA, revB = revA.cuda(), revB.cuda()
-            model.Eiters += 1
-            model.logger.update('Eit', model.Eiters)
+            #model.Eiters += 1
+            #model.logger.update('Eit', model.Eiters)
             # Pass length sorted captions for encoding
             capA_emb = model.txt_enc(captionsA[indsA], sorted(lenA, reverse=True))
             capB_emb = model.txt_enc(captionsB[indsB], sorted(lenB, reverse=True))
@@ -205,10 +207,14 @@ def train(opt, loader, model, seed):
                 'opt': opt,
                 'Eiters': model.Eiters,
             }, is_best, prefix=os.path.join(opt.logger_name, str(seed)) + '/')
-
     # Unconfigure tensorboard logger
     tb_logger.tensorboard_logger._default_logger = None
     print("Finished trained. Best score: {}".format(best_score))
+    # Create synthetic data set if option is given
+    if opt.pseudopairs:
+        model_path = os.path.join(os.path.join(opt.logger_name, str(seed)), 'model_best.pth.tar')
+        create_synthetic_dataset(model_path, opt.pseudoset)
+
 
 def validate(opt, val_loader, model, lang, n=5):
     # compute the encoding for all the validation images and captions
@@ -262,8 +268,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_set',
                         help='Which data sets to train on. m30ken, m30kde or coco. Train on multiple sets by m30kde_coco.')
+    parser.add_argument('--pseudopairs',  action='store_true',
+                        help='Run 2 experiments in sequence: 1.) train first the model(s), 2.) train new one(s) with pseudo-pairs from the first one(s)')
+    parser.add_argument('--pseudoset',
+                        help='In the format dataset1-dataset2, annotate the images of dataset1 with the captions of dataset2 for pseudoset')
     parser.add_argument('--synth_path',
-                        help='Path to the model from which to read the synthetic data sets from.')
+                        help='Path to the model from which to read the synthetic data sets.')
     parser.add_argument('--val_set',
                         help='Which data sets to early stop on. m30ken, m30kde or coco. Train on multiple sets by m30kde-coco.')
     parser.add_argument('--char_level', action='store_true',
@@ -332,6 +342,7 @@ if __name__ == '__main__':
     parser.add_argument('--multiseed', action='store_true',
                         help='Use all seeds from SEED.')
     opt = parser.parse_args()
+    
     if opt.multiseed:
         for s in SEEDS:
             main(opt, seed=s)

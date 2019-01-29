@@ -8,7 +8,7 @@ import nltk
 from torch.utils.data import DataLoader, Dataset
 import torch
 from vocab import Vocabulary
-from itertools import combinations
+from itertools import product
 
 COCO_PATH = '/roaming/u1257964/coco_mulisera_2'
 M30K_PATH = '/roaming/u1257964/multi30k-dataset/'
@@ -42,7 +42,7 @@ def build_vocabulary(captions, path='.', threshold=4):
         vocab.add_word(word)
     print('Num words:', vocab.idx)
     path = os.path.join(path, 'vocab.pkl')
-    with open(path, 'w') as f:
+    with open(path, 'wb') as f:
         pickle.dump(vocab, f,
                     pickle.HIGHEST_PROTOCOL)
     return vocab
@@ -85,7 +85,7 @@ def tokenize(s):
         String to tokenize.
     """
     s = re.sub(r'([^\s\w]|_)+', '', s)
-    tokens = nltk.tokenize.word_tokenize(s.lower().decode('utf-8'))
+    tokens = nltk.tokenize.word_tokenize(s.lower())
     return tokens
 
 
@@ -215,7 +215,6 @@ def load_data(name, split, lang_prefix, downsample=False):
         img, cap = read_m30K(path, 'de', split, lang_prefix)
     else:
         raise NotImplementedError
-    print("N images {}, N captions {}".format(len(img), len(cap)))
     return img, cap
         
 class ImageCaptionDataset(Dataset):
@@ -232,7 +231,7 @@ class ImageCaptionDataset(Dataset):
         self.vocab = vocab
         print("Tokenizing")
         self.tokenized_captions = [tokenize(x) for x in captions]
-        print(vocab)
+        print(self.length)
 
     def __getitem__(self, index):
         image = torch.Tensor(self.images[index])
@@ -248,30 +247,81 @@ class ImageCaptionDataset(Dataset):
         return self.length
 
 #FIXME This is just Sketch
-class SentencePairDataset(Dataset):
+class SentencePairIterator(Dataset):
     """
     Load precomputed captions and image features
     """
 
-    def __init__(self, captionsA, captionsB, vocab):
+    def __init__(self, captionsA, captionsB, vocab, batch_size):
         # Captions
         assert len(captionsA) == len(captionsB)
-        self.captionsA = captionsA
-        self.captionsB = captionsB
-        self.length = len(self.captionsA)
         self.vocab = vocab
-        print("Tokenizing")
-        self.tokenized_captions = [tokenize(x) for x in captions]
+        self.tokenized_captionsA = captionsA
+        self.tokenized_captionsB = captionsB
+        self.length = len(self.tokenized_captionsA)
+        self.batch_size = batch_size 
+        self.reset()
 
-    def __getitem__(self, index):
-        image = torch.Tensor(self.images[index])
-        tokens = self.tokenized_captions[index]
+    def tokenize(self, cap):
         caption = []
         caption.append(self.vocab('<start>'))
-        capt375Gion.extend([self.vocab(token) for token in tokens])
+        caption.extend([self.vocab(token) for token in cap])
         caption.append(self.vocab('<end>'))
-        target = torch.Tensor(caption)
-        return image, target, index, index
+        caption = torch.Tensor(caption)
+        return caption
+
+    def shuffle_data(self):
+        """
+        Shuffle the full dataset.
+        """
+        allpairs = zip(self.tokenized_captionsA, self.tokenized_captionsB)
+        allpairs = np.array(allpairs)
+        inds = np.random.permutation(self.length)
+        allpairs = allpairs[inds]
+        a, b = zip(*allpairs)
+        self.tokenized_captionsA = a
+        self.tokenized_captionsB = b
+
+    def reset(self):
+        """
+        Reset batching, shuffle the dataset
+        """
+        self.bottom = 0
+        self.top = self.batch_size
+        self.shuffle_data()
+
+    def next(self):
+        """Use sampling with replacement, infinite iterator."""
+        # Take 2 languages
+        capsA = self.tokenized_captionsA[self.bottom:self.top]
+        capsB = self.tokenized_captionsB[self.bottom:self.top]
+        if self.top == self.length:
+            self.reset()
+        else:
+            self.bottom += self.batch_size
+            self.top = min(self.bottom + self.batch_size, self.length)
+        # If captions are from Task 2. randomly sample one out of 5.
+        captionsA, captionsB = [], []
+        lengthsA, lengthsB = [], []
+        for ca, cb in zip(capsA, capsB):
+            capA, capB = self.tokenize(ca), self.tokenize(cb)
+            captionsA.append(capA)
+            captionsB.append(capB)
+            lengthsA.append(len(capA))
+            lengthsB.append(len(capB))
+        # Have to sort for the CUDA padding stuff.
+        targetsA = torch.zeros(len(captionsA), max(lengthsA)).long()
+        for i, cap in enumerate(captionsA):
+            end = lengthsA[i]
+            targetsA[i, :end] = cap[:end]
+        targetsB = torch.zeros(len(captionsB), max(lengthsB)).long()
+        for i, cap in enumerate(captionsB):
+            end = lengthsB[i]
+            targetsB[i, :end] = cap[:end]
+        return targetsA, targetsB, lengthsA, lengthsB
+
+    def __iter__(self):
+        return self
 
     def __len__(self):
         return self.length
@@ -287,6 +337,7 @@ class DatasetCollection():
         self.sentencepair_loaders = {}  # Just train loaders for sentence pairs.
         self.image_sets = {}            # Names of the iamge sets the train sets come from.
         self.vocab = None               # Shared vocab to be computed later.
+        #TODO don't hardcode
 
     def add_trainset(self, name, dset, batch_size, shuffle=True):
         data_loader = DataLoader(dataset=dset,
@@ -310,34 +361,40 @@ class DatasetCollection():
                                  collate_fn=collate_fn)
         self.val_sets[name] = dset
         self.val_loaders[name] = data_loader
+    
     #FIXME THis is just a sketch
-    def generate_sentencepairs(self):
+    def generate_sentencepairs(self, batch_size):
+        print("Generating sentencepairs.")
         groups = {}
         # Generate groups that share the same images
         for key, value in sorted(self.image_sets.iteritems()):
             groups.setdefault(value, []).append(key)
         # Create all pairs per group
+        self.groups = groups
         for g in groups:
             group = groups[g]
             if len(group) > 1:
                 caps = []
                 pairs = []
+                # Add each list of captions to a collection
                 for name in group:
                    dset = self.data_sets[name]
                    cap = dset.tokenized_captions
                    caps.append(cap)
-                for i in range(0, len(caps), 5):
+                for i in range(0, len(caps[0]), 5):
                     t = []
                     for j in range(len(group)):
                         t.append(caps[j][i:i+5])
-                        print(t)
-                    for pair in combinations(t, 2):
+                    for pair in product(*t):
                         pairs.append(pair)
                 self.caps = caps
-                capA, capB = zip(*pairs)
-                self.pappapa = [capA, capB]
-                self.pairs = pairs
- 
+                capsA, capsB = zip(*pairs)
+                self.capsA = capsA
+                self.capsB = capsB
+                self.sentencepairs = pairs
+                self.sentencepair_set = SentencePairIterator(capsA, capsB, self.vocab, batch_size)
+        print("Number of sentencepairs {}".format(len(pairs)))
+
     def get_valloader(self, name):
         return self.val_loaders[name]
     
@@ -360,8 +417,11 @@ class DatasetCollection():
     def __iter__(self):
         return self
 
-    def next(self):
+    def next(self, sentencepair=False):
         """Pick a data loader, either yield next batch or if ran out re-init and yield."""
+        if sentencepair:
+            capA, capB, lenA, lenB = next(self.sentencepair_set)
+            return capA, capB, lenA, lenB
         k = random.choice(self.data_loaders.keys())
         loader = self.data_iterators[k]
         try:
@@ -372,9 +432,18 @@ class DatasetCollection():
             images, targets, lengths, ids = next(loader)
         return images, targets, lengths, ids
 
+    def get_sentencepair(self):
+        """Return a batch from the SentencePairDataset."""
+        try:
+            capA, capB, lengths, ids = next(loader)
+        except StopIteration:
+            self.data_iterators[k] = iter(self.data_loaders[k])
+            loader = self.data_iterators[k]
+            images, targets, lengths, ids = next(loader)
+        return images, targets, lengths, ids
 
 def get_loaders(data_sets, val_sets, lang_prefix, downsample, 
-                path, batch_size, synth_path=None, shuffle_train=True):
+                path, batch_size, synth_path=None, shuffle_train=True, sentencepair=False):
     data_loaders = DatasetCollection()
     synthcaps = []
     synthnames = []
@@ -405,6 +474,8 @@ def get_loaders(data_sets, val_sets, lang_prefix, downsample,
         valset = ImageCaptionDataset(val_cap, val_img, vocab=None) 
         data_loaders.add_valset(name, valset, batch_size)
     data_loaders.compute_joint_vocab(path)
+    if sentencepair:
+        data_loaders.generate_sentencepairs(batch_size)
     return data_loaders 
 
 def get_test_loader(name, split, batch_size, lang_prefix, downsample=False):
