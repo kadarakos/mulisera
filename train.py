@@ -126,8 +126,8 @@ def train(opt, loader, model, seed):
             if torch.cuda.is_available():
                 indsA, indsB = indsA.cuda(), indsB.cuda()
                 revA, revB = revA.cuda(), revB.cuda()
-            #model.Eiters += 1
-            #model.logger.update('Eit', model.Eiters)
+            model.Eiters += 1
+            model.logger.update('Eit', model.Eiters)
             # Pass length sorted captions for encoding
             capA_emb = model.txt_enc(captionsA[indsA], sorted(lenA, reverse=True))
             capB_emb = model.txt_enc(captionsB[indsB], sorted(lenB, reverse=True))
@@ -179,7 +179,8 @@ def train(opt, loader, model, seed):
                 with torch.no_grad():
                     score = validate(opt, vloader, model, name)
                     total_score += score
-            # Compute val loss on sentencepair task
+            #FIXME no val loss on sentencepairs
+            """
             if opt.sentencepair:
                 # val_loss = sentencepair_eval(model, sentencepair_loader_val)
                 # tb_logger.log_value('valid_c2c', val_loss, step=model.Eiters)
@@ -187,7 +188,7 @@ def train(opt, loader, model, seed):
                 tb_logger.log_value('valid_c2c', 0., step=model.Eiters)
             else:
                 tb_logger.log_value('valid_c2c', 0., step=model.Eiters)
-
+            """
             if total_score > best_score:
                 is_best = True
                 print("New best: {}".format(total_score))

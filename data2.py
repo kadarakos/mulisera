@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 import torch
 from vocab import Vocabulary
 from itertools import product
+import sys
 
 COCO_PATH = '/roaming/u1257964/coco_mulisera_2'
 M30K_PATH = '/roaming/u1257964/multi30k-dataset/'
@@ -161,8 +162,6 @@ def read_coco(data_path, split, lang_prefix=False, downsample=False):
         #Pick the samples
         image_vectors = image_vectors[img_inds]
         captions = captions[cap_inds]
-        print(image_vectors.shape)
-        print(len(captions))
     #Repeast each image 5 times
     images = np.repeat(image_vectors, 5, axis=0)
     return images, captions
@@ -326,6 +325,7 @@ class SentencePairIterator(Dataset):
     def __len__(self):
         return self.length
 
+
 class DatasetCollection():
     
     def __init__(self):
@@ -382,10 +382,8 @@ class DatasetCollection():
                    cap = dset.tokenized_captions
                    caps.append(cap)
                 for i in range(0, len(caps[0]), 5):
-                    t = []
-                    for j in range(len(group)):
-                        t.append(caps[j][i:i+5])
-                    for pair in product(*t):
+                    t = [caps[0][i:i+5], caps[1][i:i+5]]
+                    for foo, pair in enumerate(product(*t)):
                         pairs.append(pair)
                 self.caps = caps
                 capsA, capsB = zip(*pairs)
@@ -441,6 +439,7 @@ class DatasetCollection():
             loader = self.data_iterators[k]
             images, targets, lengths, ids = next(loader)
         return images, targets, lengths, ids
+
 
 def get_loaders(data_sets, val_sets, lang_prefix, downsample, 
                 path, batch_size, synth_path=None, shuffle_train=True, sentencepair=False):
