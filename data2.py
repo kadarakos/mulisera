@@ -442,7 +442,8 @@ class DatasetCollection():
 
 
 def get_loaders(data_sets, val_sets, lang_prefix, downsample, 
-                path, batch_size, synth_path=None, shuffle_train=True, sentencepair=False):
+                path, batch_size, synth_path=None, shuffle_train=True,
+                sentencepair=False, overfit=False):
     data_loaders = DatasetCollection()
     synthcaps = []
     synthnames = []
@@ -453,7 +454,8 @@ def get_loaders(data_sets, val_sets, lang_prefix, downsample,
             synthcap = read_synthetic(name, synth_path, lang_prefix)
             synthcaps.append(synthcap)
         else:
-            train_img, train_cap = load_data(name, 'train', lang_prefix, downsample)
+            split = "val" if overfit else "train"
+            train_img, train_cap = load_data(name, split, lang_prefix, downsample)
             trainset = ImageCaptionDataset(train_cap, train_img, vocab=None)
             data_loaders.add_trainset(name, trainset, batch_size, shuffle_train)
     print("Adding synthetic data sets")
