@@ -47,7 +47,8 @@ def main(opt, seed=None):
     valsets = opt.val_set.split('-')
     loader = data.get_loaders(datasets, valsets, opt.lang_prefix, 
                               opt.downsample, os.path.join(opt.logger_name, str(seed)), 
-                              opt.batch_size, synth_path=opt.synth_path, sentencepair=opt.sentencepair)
+                              opt.batch_size, synth_path=opt.synth_path, sentencepair=opt.sentencepair,
+                              overfit=opt.overfit)
     # Construct the model
     opt.vocab_size = len(loader.vocab.idx2word)
     model = VSE(opt)
@@ -96,7 +97,6 @@ def train(opt, loader, model, seed):
         if opt.reset_train:
             # Always reset to train mode, this is not the default behavior
             model.train_start()
-        # measure data loading time
         data_time.update(time.time() - end)
 
         # make sure train logger is used
@@ -104,48 +104,40 @@ def train(opt, loader, model, seed):
 
         loss = None
         loss_c2c = None
-        # Train caption-caption ranking.
-        #TODO Update the sentencepair training
         if train_cap2cap and opt.sentencepair:
+            # Train caption-caption ranking.
+            model.Eiters += 1
+            model.logger.update('Eit', model.Eiters)
+
             capA, capB, lenA, lenB = loader.next(sentencepair=True)
             captionsA = Variable(capA)
             captionsB = Variable(capB)
             if torch.cuda.is_available():
                 captionsA = captionsA.cuda()
                 captionsB = captionsB.cuda()
-            # Create permute and inverse permute indices t so t on length
-            indsA = np.argsort(np.array(lenA))
-            indsB = np.argsort(np.array(lenB))
-            revA  = np.zeros(len(lenA), dtype='int')
-            revB  = np.zeros(len(lenB), dtype='int')
-            for i in range(len(lenA)):
-                revA[indsA[i]] = i
-                revB[indsB[i]] = i
-            indsA, indsB = torch.LongTensor(indsA), torch.LongTensor(indsB)
-            revA, revB = torch.LongTensor(revA), torch.LongTensor(revB)
-            if torch.cuda.is_available():
-                indsA, indsB = indsA.cuda(), indsB.cuda()
-                revA, revB = revA.cuda(), revB.cuda()
-            model.Eiters += 1
-            model.logger.update('Eit', model.Eiters)
+
             # Pass length sorted captions for encoding
-            capA_emb = model.txt_enc(captionsA[indsA], sorted(lenA, reverse=True))
-            capB_emb = model.txt_enc(captionsB[indsB], sorted(lenB, reverse=True))
-            model.optimizer.zero_grad()
+            # .copy() is crucial to avoid ValueError: some of the strides of a given numpy array are negative.
+            sort_idxA = np.argsort(lenA)[::-1].copy() 
+            sort_idxB = np.argsort(lenB)[::-1].copy()
+            capA_emb = model.txt_enc(captionsA[sort_idxA], sorted(lenA, reverse=True))
+            capB_emb = model.txt_enc(captionsB[sort_idxB], sorted(lenB, reverse=True))
+
             # Unsort captions for the loss computation
-            loss_c2c = model.forward_loss(capA_emb[revA], capB_emb[revB])
-            # compute gradient and do SGD step
+            rev_sort_idxA = np.argsort(sort_idxA)
+            rev_sort_idxB = np.argsort(sort_idxB)
+            model.optimizer.zero_grad()
+            loss_c2c = model.forward_loss(capA_emb[rev_sort_idxA], capB_emb[rev_sort_idxB])
             loss_c2c.backward()
             if model.grad_clip > 0:
                 clip_grad_norm(model.params, model.grad_clip)
             model.optimizer.step()
-            # Don't count this as an iter
-        # Train image-sentence ranking.
         else:
+            # Train image-sentence ranking.
             # Call next element of if its exhausted re-init the DatasetLoaderIterators
             train_data = next(loader)
             loss = model.train_emb(*train_data)
-        # Train with sentence-pair ranking batch.
+
         batch_time.update(time.time() - end)
         end = time.time()
 
@@ -342,6 +334,8 @@ if __name__ == '__main__':
                         help='Random seed.')
     parser.add_argument('--multiseed', action='store_true',
                         help='Use all seeds from SEED.')
+    parser.add_argument('--overfit', action='store_true',
+                        help='Attempt to overfit one minibatch from the validation set. Useful for debugging')
     opt = parser.parse_args()
     
     if opt.multiseed:
