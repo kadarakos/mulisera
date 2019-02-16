@@ -21,16 +21,22 @@ def aggregate_results(datasets, paths):
     for d in datasets:
         i2t = []
         t2i = []
+        rsum = 0
         for p in paths:
             with open(os.path.join(p, "{}_img2cap.pkl".format(d)), 'rb') as f:
                 logs = pickle.load(f)
-            i2t.append(logs['i2t'])
-            t2i.append(logs['t2i'])
+            i2, t2 = logs['i2t'], logs['t2i']
+            i2t.append(i2)
+            t2i.append(t2)
+            s = i2[0] + i2[1] + i2[2] + t2[0] + t2[1] + t2[2]
+            rsum += s
+
         print(d)
         I2T = np.array(i2t)
         T2I = np.array(t2i)
         r = tuple(np.mean(I2T, axis=0))
         ri = tuple(np.mean(T2I, axis=0))
+        print("Rsum: {}".format(rsum/len(paths)))
         print("Image to text: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
         print("Text to image: R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % ri)
 
@@ -306,13 +312,15 @@ def evalrank(model_path, data_set, split='dev', fold5=False,
             path = os.path.join(os.path.dirname(model_path), 'caption_embeddings.vec')
             numpy.save(path, cap_emb)	
     if caption_rank:
+        logs = {}
         for l1, l2 in itertools.permutations(emb_dict.keys(), 2):
             print(l1,l2)
             ca, cb = emb_dict[l1], emb_dict[l2]
-            r, rt = i2t(ca, cb, measure=opt.measure, n=5, return_ranks=True)
+            r, rt = i2t(ca, cb, measure=opt.measure, n=1, return_ranks=True)
             ar = (r[0] + r[1] + r[2]) / 3
             rsum = r[0] + r[1] + r[2] 
             r = (l1,l2,) +  r + (ar,) 
+            logs["{}-{}".format(l1, l2)] = r[1:]
             print("rsum: %.1f" % rsum)
             print("Caption-Caption retrieval %s-%s : R@1 %.1f | R@5 %.1f | R@10 %.1f | Medr %.1f | Meanr %.1f | Average %.1f" % r)
     
