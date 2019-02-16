@@ -18,6 +18,7 @@ import argparse
 from compute_embeddings import create_synthetic_dataset
 
 
+
 SEEDS = [112, 1865, 57493]
 rseed = 41376566
 
@@ -90,6 +91,13 @@ def train(opt, loader, model, seed):
     # Call iterator on the DatasetLoader returning DatasetLoaderIterator
     end = time.time()
     patience_count = 0
+    if opt.max_violation:
+        start_up = True
+    else:
+        start_up = False
+    loss = None
+    loss_c2c = None
+    losses = []
     while not stop:
         iters += 1
         # Pick a data set and batch
@@ -101,10 +109,7 @@ def train(opt, loader, model, seed):
 
         # make sure train logger is used
         model.logger = train_logger
-
-        loss = None
-        loss_c2c = None
-        if train_cap2cap and opt.sentencepair:
+        if train_cap2cap and opt.sentencepair and not start_up:
             # Train caption-caption ranking.
             model.Eiters += 1
             model.logger.update('Eit', model.Eiters)
@@ -132,15 +137,15 @@ def train(opt, loader, model, seed):
             if model.grad_clip > 0:
                 clip_grad_norm(model.params, model.grad_clip)
             model.optimizer.step()
+            loss = None
         else:
             # Train image-sentence ranking.
             # Call next element of if its exhausted re-init the DatasetLoaderIterators
             train_data = next(loader)
             loss = model.train_emb(*train_data)
-
+            loss_c2c = None
         batch_time.update(time.time() - end)
         end = time.time()
-
         # Print log info
         if model.Eiters % opt.log_step == 0:
             logging.info(
@@ -149,6 +154,7 @@ def train(opt, loader, model, seed):
                 'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                 .format(batch_time=batch_time,
                         data_time=data_time, e_log=str(model.logger)))
+         
 
         # Record logs in tensorboard
         tb_logger.log_value('step', iters, step=model.Eiters)
@@ -157,6 +163,8 @@ def train(opt, loader, model, seed):
 
         if loss is not None:
             tb_logger.log_value('train', float(loss.detach().cpu().numpy()), step=model.Eiters)
+            if start_up:
+                losses.append(loss.detach().cpu().numpy())
 
         if loss_c2c is not None:
             tb_logger.log_value('c2c', float(loss_c2c.detach().cpu().numpy()), step=model.Eiters)
@@ -171,6 +179,12 @@ def train(opt, loader, model, seed):
                 with torch.no_grad():
                     score = validate(opt, vloader, model, name)
                     total_score += score
+            if  np.mean(losses) < 49.0 and start_up and opt.sentencepair:
+                start_up = False
+                print("startup period over (loss = {}) turning on c2c.".format(loss))
+            else:
+                print("Mean loss {}".format(np.mean(losses)))
+                losses = []
             #FIXME no val loss on sentencepairs
             """
             if opt.sentencepair:
