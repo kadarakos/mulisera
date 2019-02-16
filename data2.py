@@ -108,7 +108,6 @@ def read_m30K(data_path, lang, split, lang_prefix=False):
     image_vectors = np.load(imgpath).astype("float32")
     images = []
     caps = []
-    img_ids = []
     for i in range(1, 6):
         text = '{}.lc.norm.tok.{}.{}'.format(split, i, lang)
         path = os.path.join('/data/task2/tok/', text)
@@ -122,6 +121,33 @@ def read_m30K(data_path, lang, split, lang_prefix=False):
     caps = zip(*caps)
     captions = [val for tup in caps for val in tup]
     images = np.repeat(image_vectors, 5, axis=0)
+    return images, captions   
+
+def read_m30K_task1(data_path, lang, split, lang_prefix=False):
+    """
+    Reads data from Multi30K task 1 translation-pairs.
+    
+    data_path : str
+        Root of the Multi30K data folder.
+    split : str
+        train, val or test.
+    lang_prefix : bool
+        Place en_ or de_ prefix infront of each token.
+    """
+    if split == 'test':
+        split = 'test_2016'
+    img_path = data_path + '/data/imgfeats/'
+    imgpath = os.path.join(img_path, split +'-resnet50-avgpool.npy')
+    images = np.load(imgpath).astype("float32")
+    captions = []
+    p = data_path + '/data/task1/tok/'
+    filename = '{}.lc.norm.tok.{}'.format(split, lang)
+    with open(os.path.join(p, filename), 'rb') as f:
+        for line in f:
+            c = line.strip()
+            if lang_prefix:
+                pass
+            captions.append(c)
     return images, captions   
 
 
@@ -212,6 +238,12 @@ def load_data(name, split, lang_prefix, downsample=False):
     elif name == 'm30kde':
         path = M30K_PATH
         img, cap = read_m30K(path, 'de', split, lang_prefix)
+    elif name == 'm30ken1':
+        path = M30K_PATH
+        img, cap = read_m30K_task1(path, 'en', split, lang_prefix)
+    elif name == 'm30kde1':
+        path = M30K_PATH
+        img, cap = read_m30K_task1(path, 'de', split, lang_prefix)
     else:
         raise NotImplementedError
     return img, cap
@@ -334,7 +366,7 @@ class DatasetCollection():
         self.data_sets = {}             # Names of the train sets.
         self.val_loaders = {}           # Data loaders for validation sets.
         self.val_sets = {}              # Names of the validation sets.
-        self.sentencepair_loaders = {}  # Just train loaders for sentence pairs.
+        self.sentencepair_iterators = {}  # Just train loaders for sentence pairs.
         self.image_sets = {}            # Names of the iamge sets the train sets come from.
         self.vocab = None               # Shared vocab to be computed later.
         #TODO don't hardcode
@@ -352,6 +384,7 @@ class DatasetCollection():
         if n == ['m30ken'] or n == ['m30kde']:
             n = ['m30k']
         self.image_sets[name] = n[0] if len(n) == 1 else n[1] 
+        print(self.image_sets)
 
     def add_valset(self, name, dset, batch_size, shuffle=False):
         data_loader = DataLoader(dataset=dset,
@@ -390,8 +423,9 @@ class DatasetCollection():
                 self.capsA = capsA
                 self.capsB = capsB
                 self.sentencepairs = pairs
-                self.sentencepair_set = SentencePairIterator(capsA, capsB, self.vocab, batch_size)
-        print("Number of sentencepairs {}".format(len(pairs)))
+                sentencepair_set = SentencePairIterator(capsA, capsB, self.vocab, batch_size)
+                self.sentencepair_iterators[g] = sentencepair_set 
+                print("Number of sentencepairs {} in group {}".format(len(pairs), g))
 
     def get_valloader(self, name):
         return self.val_loaders[name]
@@ -418,17 +452,20 @@ class DatasetCollection():
     def next(self, sentencepair=False):
         """Pick a data loader, either yield next batch or if ran out re-init and yield."""
         if sentencepair:
-            capA, capB, lenA, lenB = next(self.sentencepair_set)
+            k = random.choice(self.sentencepair_iterators.keys())
+            loader = self.sentencepair_iterators[k]
+            capA, capB, lenA, lenB = next(loader)
             return capA, capB, lenA, lenB
-        k = random.choice(self.data_loaders.keys())
-        loader = self.data_iterators[k]
-        try:
-            images, targets, lengths, ids = next(loader)
-        except StopIteration:
-            self.data_iterators[k] = iter(self.data_loaders[k])
+        else:
+            k = random.choice(self.data_loaders.keys())
             loader = self.data_iterators[k]
-            images, targets, lengths, ids = next(loader)
-        return images, targets, lengths, ids
+            try:
+                images, targets, lengths, ids = next(loader)
+            except StopIteration:
+                self.data_iterators[k] = iter(self.data_loaders[k])
+                loader = self.data_iterators[k]
+                images, targets, lengths, ids = next(loader)
+            return images, targets, lengths, ids
 
     def get_sentencepair(self):
         """Return a batch from the SentencePairDataset."""
