@@ -285,7 +285,6 @@ class ContrastiveLoss(nn.Module):
             I = I.cuda()
         cost_s = cost_s.masked_fill_(I, 0)
         cost_im = cost_im.masked_fill_(I, 0)
-
         # keep the maximum violating negative for each query
         if self.max_violation:
             cost_s = cost_s.max(1)[0]
