@@ -96,7 +96,11 @@ def create_synthetic_dataset(model_path, datasets, percentile=None):
         raise NotImplementedError
     d1, d2 = datasets
     caps = get_synthetic_captions(model_path, d1, d2, percentile)
-    out_path = os.path.join(os.path.dirname(model_path), "{}_{}.txt".format(datasets[1], datasets[0]))
+    if percentile:
+        filename = "{}_{}_{}.txt".format(datasets[1], datasets[0], percentile)
+    else:
+        filename = "{}_{}.txt".format(datasets[1], datasets[0])
+    out_path = os.path.join(os.path.dirname(model_path), filename)
     print("Writing caps in {}".format(out_path))
     with open(out_path, 'w') as f:
         for line in caps:

@@ -207,7 +207,7 @@ def read_synthetic(dataname, model_path, lang_prefix=False):
         Number of images to keep.
     """
     caps = []
-    d1, d2 = dataname.split("_")
+    #d1, d2 = dataname.split("_")
     model_parent = model_path
     cap_file = dataname+".txt"
     path = os.path.join(model_parent, cap_file)
