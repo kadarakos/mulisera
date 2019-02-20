@@ -159,7 +159,9 @@ class EncoderText(nn.Module):
         # Take last hidden state.
         else:
             I = torch.LongTensor(lengths).view(-1, 1, 1)
-            I = Variable(I.expand(x.size(0), 1, self.embed_size)-1).cuda()
+            I = Variable(I.expand(x.size(0), 1, self.embed_size)-1)
+            if torch.cuda.is_available():
+                I = I.cuda()
             out = torch.gather(padded[0], 1, I).squeeze(1)
         # Take max over direction if bidi
         if self.bidi:
