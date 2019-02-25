@@ -128,8 +128,8 @@ def encode_data(model, data_loader, log_step=10, logging=print):
             cap_embs = numpy.zeros((len(data_loader.dataset), cap_emb.size(1)))
 
         # preserve the embeddings by copying from gpu and converting to numpy
-        img_embs[ids] = img_emb.data.cpu().numpy().copy()
-        cap_embs[ids] = cap_emb.data.cpu().numpy().copy()
+        img_embs[list(ids)] = img_emb.data.cpu().numpy().copy()
+        cap_embs[list(ids)] = cap_emb.data.cpu().numpy().copy()
 
         # measure accuracy and record loss
         val_loss = model.forward_loss(img_emb, cap_emb)
@@ -280,7 +280,10 @@ def evalrank(model_path, data_set, split='dev', fold5=False,
     """
     datasets = data_set.split('-')
     # load model and options
-    checkpoint = torch.load(model_path)
+    if torch.cuda.is_available():
+        checkpoint = torch.load(model_path)
+    else:
+        checkpoint = torch.load(model_path, map_location='cpu')
     opt = checkpoint['opt']
 
     # Never use undersample when testing.
